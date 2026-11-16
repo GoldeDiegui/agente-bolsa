@@ -1,0 +1,86 @@
+name: Gestor de cartera
+
+on:
+  schedule:
+    - cron: '*/5 6-21 * * 1-5'
+    - cron: '41 */3 * * *'
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'datos = recopilar datos y noticias · trade = operar (solo si hay mercado abierto)'
+        type: choice
+        default: datos
+        options: [datos, trade]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gestor
+  cancel-in-progress: false
+
+jobs:
+  ciclo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Elegir modo
+        id: modo
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_MODO: ${{ inputs.modo }}
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then M="$INPUT_MODO"
+          elif [ "$SCHEDULE" = "*/5 6-21 * * 1-5" ]; then M="trade"
+          else M="datos"; fi
+          echo "modo=${M:-datos}" >> "$GITHUB_OUTPUT"
+
+      - name: Comprobar si hay mercado abierto
+        id: puerta
+        run: node gate.js "${{ steps.modo.outputs.modo }}"
+
+      - name: Recuperar el estado (rama estado)
+        if: steps.puerta.outputs.go == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          if git ls-remote --exit-code --heads "$REMOTE" estado >/dev/null 2>&1; then
+            git clone --quiet --depth 1 --branch estado "$REMOTE" estado
+          else
+            echo "Primera ejecución: se crea la rama estado."
+            mkdir -p estado/data
+            git -C estado init --quiet -b estado
+            git -C estado remote add origin "$REMOTE"
+            if [ -f seed/state.json ]; then cp seed/state.json estado/data/state.json; echo "Cartera inicial importada de seed/state.json"; fi
+          fi
+
+      - name: Ejecutar el ciclo
+        if: steps.puerta.outputs.go == 'true'
+        env:
+          DATA_FILE: ${{ github.workspace }}/estado/data/state.json
+          FUNDAMENTALS_FILE: ${{ github.workspace }}/estado/data/fundamentals.json
+          SITE_DIR: ${{ github.workspace }}/estado/site
+          NO_SIMULATION: '1'
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: node cycle.js "${{ steps.modo.outputs.modo }}"
+
+      - name: Guardar el estado
+        if: ${{ always() && steps.puerta.outputs.go == 'true' }}
+        working-directory: estado
+        run: |
+          git config user.name "gestor-bot"
+          git config user.email "gestor-bot@users.noreply.github.com"
+          git add -A
+          if git rev-parse --verify HEAD >/dev/null 2>&1 && [ -z "$(git status --porcelain)" ]; then echo "Sin cambios que guardar."; exit 0; fi
+          MSG="Estado $(date -u +'%Y-%m-%d %H:%M') UTC"
+          if git rev-parse --verify HEAD >/dev/null 2>&1; then git commit --quiet --amend -m "$MSG"; else git commit --quiet -m "$MSG"; fi
+          git push --quiet --force origin HEAD:estado
