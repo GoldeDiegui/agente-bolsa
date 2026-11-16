@@ -1,0 +1,17 @@
+{
+  "name": "agente-bolsa",
+  "version": "1.0.0",
+  "description": "Agente financiero que gestiona una cartera virtual simulada en tiempo real",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "diagnostico": "node diagnostico.js",
+    "ciclo": "node cycle.js trade",
+    "ciclo-datos": "node cycle.js datos"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.60.0",
+    "express": "^4.19.2"
+  }
+}
