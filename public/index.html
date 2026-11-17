@@ -312,9 +312,16 @@ function renderMarket(q, market) {
   }
 }
 
-function renderOrders(list) {
+let lastOrders = [], lastEvents = [];
+function renderOrders(list, events) {
+  if (list) lastOrders = list;
+  if (events) lastEvents = events;
+  const rows = [
+    ...lastOrders.map(o => ({ t:o.t, html:`<td class="${o.side==='buy'?'up':'down'}">${o.side==='buy'?'COMPRA':'VENTA'}</td><td><b class="sym" data-sym="${esc(o.symbol)}">${esc(o.symbol)}</b></td><td class="r">${o.shares}</td><td class="r">${usd(o.price)}</td><td class="r">${usd(o.total)}</td><td>${esc(o.by)}</td><td>${esc(o.reason)}</td>` })),
+    ...lastEvents.map(e => ({ t:e.t, html:`<td style="color:var(--acc)">${e.type==='split'?'SPLIT':'DIVIDENDO'}</td><td><b class="sym" data-sym="${esc(e.symbol)}">${esc(e.symbol)}</b></td><td class="r">${e.shares ? (e.shares > 0 ? '+' : '') + e.shares : ''}</td><td class="r"></td><td class="r ${e.type==='dividend'?'up':''}">${e.total ? usd(e.total) : ''}</td><td>sistema</td><td>${esc(e.text)}</td>` })),
+  ].sort((a, b) => b.t - a.t);
   $('ord').innerHTML = '<tr><th>Fecha y hora</th><th>Op.</th><th>Valor</th><th class="r">Acc.</th><th class="r">Precio</th><th class="r">Total</th><th>Por</th><th>Motivo</th></tr>' +
-    (list.map(o => `<tr><td>${dt(o.t)}</td><td class="${o.side==='buy'?'up':'down'}">${o.side==='buy'?'COMPRA':'VENTA'}</td><td><b class="sym" data-sym="${esc(o.symbol)}">${esc(o.symbol)}</b></td><td class="r">${o.shares}</td><td class="r">${usd(o.price)}</td><td class="r">${usd(o.total)}</td><td>${esc(o.by)}</td><td>${esc(o.reason)}</td></tr>`).join('')
+    (rows.map(r => `<tr><td>${dt(r.t)}</td>${r.html}</tr>`).join('')
       || '<tr><td colspan="8" style="color:var(--mut)">Sin operaciones todavía.</td></tr>');
 }
 
@@ -366,7 +373,7 @@ async function loadStatic() {
     eqChart.data.labels = []; eqChart.data.datasets.forEach(d => d.data = []);
     s.curve.forEach(addPoint); eqChart.update();
     renderPortfolio(s.portfolio); renderRisk(s.risk, s.portfolio); renderMarket(s.quotes, s.market);
-    renderOrders(s.orders); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); renderBanner(s);
+    renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); renderBanner(s);
     $('live').textContent = '● publicado ' + ago(s.updatedAt); $('live').className = (Date.now() - s.updatedAt < 3 * 3600e3 ? 'up' : 'down');
   };
   await refresh();
@@ -379,7 +386,7 @@ async function load() {
   initCharts();
   s.curve.forEach(addPoint); eqChart.update();
   renderPortfolio(s.portfolio); renderRisk(s.risk, s.portfolio); renderMarket(s.quotes, s.market);
-  renderOrders(s.orders); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); setInterval(loadOpps, 30000);
+  renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); setInterval(loadOpps, 30000);
   if (s.agentMode === 'reglas') addMsg('Modo gratuito: soy un gestor basado en reglas (stop-loss -8%, toma de beneficios +15%, máx. 25% por valor, 15% de efectivo mínimo). Decido con análisis fundamental (valoración frente al sector, crecimiento, calidad, analistas, resultados y noticias). Prueba "oportunidades", "analiza apple", "¿está cara nvidia?", "por qué compraste X", "revisa la cartera" o "estado de los datos". Revisión automática cada 5 minutos.', 'a');
 
   const es = new EventSource('/api/stream');
@@ -394,7 +401,7 @@ async function load() {
   es.addEventListener('pending', (e) => renderPending(JSON.parse(e.data)));
   es.addEventListener('reset', () => location.reload());
   es.addEventListener('agent', async (e) => {
-    const s2 = await (await fetch('/api/state')).json(); renderAgentLog(s2.agentLog);
+    const s2 = await (await fetch('/api/state')).json(); renderAgentLog(s2.agentLog); renderOrders(s2.orders, s2.events);
     $('revBtn').disabled = false;
   });
 }
