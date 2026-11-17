@@ -2,7 +2,7 @@
 // Decide con análisis fundamental (valoración frente al sector, crecimiento, calidad, analistas, resultados y titulares)
 // y con gestión de riesgo (stop-loss, toma de beneficios, límite de concentración).
 import { UNIVERSE, getAllQuotes, getQuote, getHistory, isValid } from './market.js';
-import { placeOrder, getSummary, getRisk, getOrders, addLimitOrder, cancelLimitOrder, getPending, canTrade } from './portfolio.js';
+import { placeOrder, getSummary, getRisk, getOrders, addLimitOrder, cancelLimitOrder, getPending, canTrade, eventsFresh } from './portfolio.js';
 import { openMarkets, ENFORCE } from './hours.js';
 import { analyze, analysisText, rank, analysisCoverage, thesisLine, worstLine } from './analysis.js';
 import { fundamentalsStats, hasFinnhub } from './fundamentals.js';
@@ -30,11 +30,14 @@ function trendPct(symbol) {
 }
 const lastBuyAt = (symbol) => getOrders().find((o) => o.symbol === symbol && o.side === 'buy')?.t ?? 0;
 const worst = worstLine;
+// Una caída enorme hasta ~1/k del coste (k = 2, 3, 4, 5, 10…) puede ser un split sin ajustar y no una pérdida real
+const suspectSplit = (p) => { const r = p.price / p.avgCost; return r < 0.65 && [2, 3, 4, 5, 6, 8, 10, 15, 20].some((k) => Math.abs(r * k - 1) < 0.15); };
 
 // Revisión autónoma: riesgo, tesis de las posiciones abiertas y compras con fundamento.
 export function autonomousReview() {
   const actions = [];
   const sold = new Set();
+  let suspectSkips = [];
   let closedSkips = 0; // decisiones que habría tomado pero el mercado de ese valor está cerrado
   const tryOrder = (o, label) => {
     if (!canTrade(o.symbol)) { closedSkips++; return false; }
@@ -46,6 +49,7 @@ export function autonomousReview() {
   // 1) Gestión de riesgo sobre lo que ya tengo
   for (const p of getSummary().positions) {
     if (p.pnlPct <= STOP_LOSS_PCT) {
+      if (p.pnlPct <= -30 && suspectSplit(p) && !eventsFresh(p.symbol)) { suspectSkips.push(p.symbol); continue; } // no vende por un posible split sin verificar
       if (tryOrder({ symbol: p.symbol, side: 'sell', shares: p.shares, reason: `Stop-loss: pérdida de ${pct(p.pnlPct)} (límite ${STOP_LOSS_PCT}%)` },
         `Vendo todo ${p.symbol} por stop-loss (${pct(p.pnlPct)}).`)) sold.add(p.symbol);
     } else if (p.pnlPct >= TAKE_PROFIT_PCT && p.shares >= 2) {
@@ -130,6 +134,7 @@ export function autonomousReview() {
   const open = ENFORCE ? openMarkets() : null;
   if (actions.length) head = actions.join(' ');
   else if (open && !open.length) head = 'Mercados cerrados: no se opera hasta la próxima sesión (el gestor sigue recopilando datos y noticias).';
+  else if (suspectSkips.length) head = `Sin cambios: ${suspectSkips.join(', ')} ha caído de golpe y podría ser un split sin verificar; no se vende por stop-loss hasta confirmar con los datos de eventos.`;
   else if (closedSkips) head = `Sin cambios: ${closedSkips} decisión(es) pendientes de que abra el mercado de ese valor.`;
   else if (!ready && !ALLOW_MOMENTUM_ONLY) head = `Sin cambios: el análisis fundamental aún cubre ${cov.analyzed}/${cov.total} valores y necesito al menos ${Math.ceil(cov.total * MIN_COVERAGE)} para comparar cada empresa con su sector. El gestor espera antes de comprar o vender por tesis (la gestión de riesgo sigue activa).`;
   else {

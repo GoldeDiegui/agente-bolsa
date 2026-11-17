@@ -58,13 +58,21 @@ El gestor puede trabajar solo en los servidores gratuitos de GitHub Actions. No 
 - La cartera de la nube es independiente de la de tu ordenador (`data/state.json`). Para empezar con la tuya, copia ese fichero a `seed/state.json` antes de la primera ejecución.
 - Comandos: `npm.cmd run ciclo` (una pasada de operar, solo si hay mercado abierto; `FORCE_RUN=1` para forzarla) y `npm.cmd run ciclo-datos`.
 
+## Splits y dividendos
+
+`corporate.js` revisa en cada ciclo (y cada 10 min en local) los splits y dividendos de los valores en cartera con los datos gratuitos de Yahoo.
+- **Split:** multiplica las acciones y divide el coste medio, de modo que el valor de la posición no cambia; se ajustan también las órdenes límite pendientes y las fracciones se abonan en efectivo. Solo se aplica cuando el precio de mercado ya refleja el split.
+- **Dividendo:** se abona en efectivo (en USD, al cambio actual) el día ex-dividendo, sin retención de impuestos.
+- **Guarda anti-venta falsa:** si un valor cae de golpe a ~1/2, 1/3, 1/5, 1/10… de su coste y los eventos no se han podido revisar en los últimos 45 min, el gestor no vende por stop-loss hasta confirmarlo (podría ser un split sin ajustar).
+- Aparecen en el historial como SPLIT y DIVIDENDO.
+
 ## Arquitectura
 
 - `universe.json`: los valores disponibles (S&P 500 con su sector GICS + IBEX 35) y SPY como referencia. Se puede editar a mano: `symbol` es el ticker de Yahoo Finance (`SAN.MC` para la bolsa española, `BRK-B` con guion).
 - `market.js`: precios desde Yahoo Finance. Cada 5 s refresca lo que tienes en cartera y un lote de 15 valores del resto (`UNIVERSE_BATCH`), así que los ~540 valores se cargan en unos 3 minutos sin saturar Yahoo. Los valores del IBEX cotizan en EUR y se convierten a USD con el cambio EUR/USD. Solo 10 valores tienen respaldo simulado si no hay conexión; el resto queda "sin datos" y no se puede operar hasta tener precio.
 - `portfolio.js`: efectivo, posiciones, órdenes (comisión 1 USD), límite del 30 % por valor, métricas de riesgo y comparación con SPY. También las **órdenes límite**: una compra límite se ejecuta cuando el precio baja al nivel indicado (o menos) y una venta límite cuando sube a él (o más). El límite va en la moneda del valor (EUR en el IBEX). No reservan efectivo, caducan a los 30 días y se guardan con la cartera. Se crean desde la web (tipo "Límite") o por chat: `compra 10 AAPL a 300`, `órdenes pendientes`, `cancela la orden 2`.
 - `fundamentals.js`: descarga y caché de fundamentales, calendario de resultados y noticias (Finnhub/Yahoo, con límites de ritmo y reintentos). `analysis.js`: modelo de puntuación y veredictos. `diagnostico.js`: prueba de conexión con los datos.
-- `hours.js`: horarios de NYSE y Bolsa de Madrid y condiciones para operar. `cycle.js` y `gate.js`: modo "una pasada" para la nube. `.github/workflows/`: ciclo del gestor, publicación de la web y latido mensual.
+- `hours.js`: horarios de NYSE y Bolsa de Madrid y condiciones para operar. `corporate.js`: splits y dividendos. `cycle.js` y `gate.js`: modo "una pasada" para la nube. `.github/workflows/`: ciclo del gestor, publicación de la web y latido mensual.
 - `rules.js`: gestor gratuito (revisión autónoma, decisiones por tesis y chat por palabras clave).
 - `agent.js`: elige entre reglas y Claude según haya clave.
 - `server.js`: API REST + Server-Sent Events para el tiempo real.

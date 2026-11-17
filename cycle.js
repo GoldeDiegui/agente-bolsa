@@ -5,7 +5,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { refreshPrices, getAllQuotes, marketStats, UNIVERSE } from './market.js';
-import { getSummary, snapshot, getOrders, getEquityCurve, getRisk, getPending, checkPending, getWatchedSymbols, addAgentLog, getAgentLog, flushState } from './portfolio.js';
+import { getSummary, snapshot, getOrders, getEquityCurve, getRisk, getPending, checkPending, getWatchedSymbols, addAgentLog, getAgentLog, getEvents, flushState } from './portfolio.js';
+import { checkCorporateEvents } from './corporate.js';
 import { runFundamentalsBudget, flushFundamentals, fundamentalsStats, hasFinnhub } from './fundamentals.js';
 import { analyze, brief, rank, shortlist, analysisCoverage } from './analysis.js';
 import { autonomousReview, agentEnabled, agentMode } from './agent.js';
@@ -43,6 +44,12 @@ try {
   await refreshPrices([...getWatchedSymbols(), ...worklist.getShortlist()]);
   log(`Precios: ${marketStats().real} reales`);
 
+  // 3) Splits y dividendos de lo que tengo (antes de decidir nada, para que los precios y las acciones cuadren)
+  {
+    const { applied, failures } = await checkCorporateEvents();
+    for (const e of applied) { log(`${e.type === 'split' ? 'Split' : 'Dividendo'} ${e.symbol}: ${e.text}`); addAgentLog({ t: Date.now(), summary: `${e.type === 'split' ? 'Split' : 'Dividendo'} en ${e.symbol}: ${e.text}` }); }
+    if (failures) log(`Eventos: ${failures} valor(es) sin revisar (se reintenta en el próximo ciclo)`);
+  }
   if (mode === 'trade') {
     const before = getOrders().length;
     const changed = checkPending();
@@ -89,7 +96,7 @@ function exportSite() {
     markets: Object.fromEntries(Object.keys(MARKETS).map((k) => [k, { open: marketClock(k, now).open, schedule: scheduleText(k) }])),
     quotes: getAllQuotes().filter((q) => q.price != null).map((q) => ({ symbol: q.symbol, name: q.name, sector: q.sector, market: q.market, currency: q.currency, price: q.price, priceNative: q.priceNative, changePct: q.changePct, source: q.source })),
     market: marketStats(), analysis: analysisCoverage(), portfolio: s, risk: getRisk(),
-    orders: getOrders().slice(0, 300), pending: getPending(),
+    orders: getOrders().slice(0, 300), events: getEvents().slice(0, 100), pending: getPending(),
     curve: curve.filter((_, i) => i % step === 0 || i === curve.length - 1),
     agentLog: getAgentLog(), opportunities, analyses, data: fundamentalsStats(),
   };

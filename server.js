@@ -2,9 +2,10 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { refreshPrices, getAllQuotes, getHistory, marketStats } from './market.js';
-import { getSummary, snapshot, getOrders, getEquityCurve, getRisk, placeOrder, addAgentLog, getAgentLog, flushState, resetPortfolio, getWatchedSymbols, addLimitOrder, cancelLimitOrder, getPending, checkPending } from './portfolio.js';
+import { getSummary, snapshot, getOrders, getEquityCurve, getRisk, placeOrder, addAgentLog, getAgentLog, flushState, resetPortfolio, getWatchedSymbols, addLimitOrder, cancelLimitOrder, getPending, checkPending, getEvents } from './portfolio.js';
 import { chat, autonomousReview, agentEnabled, agentMode } from './agent.js';
 import { startFundamentals, flushFundamentals, fundamentalsStats } from './fundamentals.js';
+import { checkCorporateEvents } from './corporate.js';
 import { analyze, analysisText, brief, rank, shortlist, analysisCoverage } from './analysis.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -59,7 +60,7 @@ app.get('/api/data-status', (_req, res) => res.json(fundamentalsStats()));
 app.get('/api/state', (_req, res) => {
   res.json({
     quotes: getAllQuotes(), market: marketStats(), analysis: analysisCoverage(), portfolio: portfolioView(), risk: getRisk(),
-    orders: getOrders(), pending: getPending(), curve: getEquityCurve(), agentLog: getAgentLog(), agentEnabled: agentEnabled(), agentMode: agentMode(),
+    orders: getOrders(), events: getEvents(), pending: getPending(), curve: getEquityCurve(), agentLog: getAgentLog(), agentEnabled: agentEnabled(), agentMode: agentMode(),
   });
 });
 app.get('/api/history/:symbol', (req, res) => res.json(getHistory(req.params.symbol.toUpperCase())));
@@ -141,6 +142,16 @@ async function tick() {
 await tick();
 setInterval(tick, PRICE_INTERVAL_MS);
 setInterval(runReview, REVIEW_INTERVAL_MS);
+
+// Splits y dividendos de las posiciones: se revisan cada 10 minutos (y al arrancar)
+async function runEvents() {
+  try {
+    const { applied } = await checkCorporateEvents();
+    for (const e of applied) logDecision(`${e.type === 'split' ? 'Split' : 'Dividendo'} en ${e.symbol}: ${e.text}`);
+  } catch (e) { console.warn('Revisión de splits/dividendos fallida:', e.message); }
+}
+setTimeout(runEvents, 20000);
+setInterval(runEvents, 10 * 60 * 1000);
 
 // Guarda el estado al cerrar con Ctrl+C
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { flushState(); flushFundamentals(); process.exit(0); });

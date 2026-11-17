@@ -22,6 +22,7 @@ const freshState = () => ({
   agentLog: [],    // decisiones del gestor
   pending: [],     // órdenes límite pendientes
   pendingSeq: 0,
+  events: [],      // splits y dividendos aplicados a las posiciones
 });
 
 let state = freshState();
@@ -89,7 +90,7 @@ export function placeOrder({ symbol, side, shares, reason = '', by = 'usuario' }
     if ((current + gross) / equity > MAX_POSITION_PCT) {
       return { ok: false, error: `Superaría el límite del ${MAX_POSITION_PCT * 100}% del patrimonio en ${symbol}` };
     }
-    const pos = state.positions[symbol] ?? { shares: 0, avgCost: 0 };
+    const pos = state.positions[symbol] ?? { shares: 0, avgCost: 0, evFrom: Date.now(), evDone: [], evCheckedTo: Date.now() };
     pos.avgCost = (pos.avgCost * pos.shares + gross) / (pos.shares + shares);
     pos.shares += shares;
     state.positions[symbol] = pos;
@@ -185,6 +186,59 @@ export function cancelLimitOrder(id) {
 }
 
 export const getPending = () => state.pending.slice();
+
+// ---------- Splits y dividendos ----------
+// Un split no cambia el valor de la posición: multiplica las acciones y divide el coste medio (y el precio de mercado baja
+// en la misma proporción). Si no se ajusta, la cartera vería una pérdida falsa y el stop-loss vendería.
+// Los dividendos se abonan en efectivo (sin retención de impuestos).
+// Cada posición recuerda desde cuándo cuenta (evFrom), qué eventos ya se aplicaron (evDone) y cuándo se revisó por última vez (evCheckedTo).
+const firstBuyTime = (symbol) => state.orders.find((o) => o.symbol === symbol && o.side === 'buy')?.t;
+export const getEventWatch = () => Object.keys(state.positions).map((symbol) => ({ symbol }));
+export const getEvents = () => state.events.slice().reverse();
+// ¿Se han revisado hace poco los splits/dividendos de este valor? (si no, una caída brusca podría ser un split sin ajustar)
+export const eventsFresh = (symbol, maxAgeMs = 45 * 60 * 1000) => { const t = state.positions[symbol]?.evCheckedTo; return Boolean(t) && Date.now() - t < maxAgeMs; };
+
+// events: [{type:'split', t, num, den} | {type:'dividend', t, amount}] (t en ms). Devuelve los eventos aplicados.
+export function applyCorporateEvents(symbol, events, checkedTo = Date.now()) {
+  const pos = state.positions[symbol];
+  if (!pos) return [];
+  pos.evFrom ??= pos.evCheckedTo ?? firstBuyTime(symbol) ?? checkedTo; // posiciones guardadas con versiones anteriores
+  pos.evDone ??= [];
+  const q = getQuote(symbol);
+  // el evento solo cuenta cuando el precio ya lo refleja: el último precio es posterior a la fecha del evento
+  const crossed = (ev) => q?.price != null && (q.marketTime == null ? Date.now() - ev.t > 6 * 3600e3 : q.marketTime >= ev.t);
+  const rate = q?.price != null && q.priceNative ? q.price / q.priceNative : null;
+  const applied = [];
+  for (const ev of events.filter((e) => e.t > pos.evFrom && e.t <= checkedTo).sort((a, b) => a.t - b.t)) {
+    const key = `${ev.type}:${ev.t}`;
+    if (pos.evDone.includes(key) || !crossed(ev)) continue; // ya aplicado, o el precio aún no lo refleja (se reintenta)
+    if (ev.type === 'split') {
+      const ratio = ev.num / ev.den;
+      const exact = pos.shares * ratio, newShares = Math.floor(exact);
+      const cashInLieu = +((exact - newShares) * q.price).toFixed(2);
+      const before = pos.shares;
+      pos.avgCost = pos.avgCost / ratio;
+      pos.shares = newShares;
+      state.cash += cashInLieu;
+      for (const o of state.pending) if (o.symbol === symbol && o.t < ev.t) { o.limit = +(o.limit / ratio).toFixed(4); o.shares = Math.max(1, Math.round(o.shares * ratio)); }
+      const e = { t: Date.now(), evT: ev.t, symbol, type: 'split', shares: newShares - before, total: cashInLieu,
+        text: `Split ${ev.num}:${ev.den}: ${before} → ${newShares} acciones, coste medio ${pos.avgCost.toFixed(2)} US$` + (cashInLieu ? `; ${cashInLieu.toFixed(2)} US$ en efectivo por fracciones` : '') };
+      state.events.push(e); applied.push(e); pos.evDone.push(key);
+      if (newShares === 0) { delete state.positions[symbol]; break; }
+    } else if (ev.type === 'dividend' && rate) {
+      const total = +(pos.shares * ev.amount * rate).toFixed(2);
+      state.cash += total;
+      const e = { t: Date.now(), evT: ev.t, symbol, type: 'dividend', shares: 0, total,
+        text: `Dividendo de ${ev.amount} ${q.currency}/acción × ${pos.shares} acciones = ${total.toFixed(2)} US$ (sin impuestos)` };
+      state.events.push(e); applied.push(e); pos.evDone.push(key);
+    }
+  }
+  if (state.positions[symbol]) { pos.evCheckedTo = checkedTo; if (pos.evDone.length > 40) pos.evDone.splice(0, pos.evDone.length - 40); }
+  if (state.events.length > 300) state.events.splice(0, state.events.length - 300);
+  saveSoon();
+  return applied;
+}
+
 // ¿Se puede operar este valor ahora mismo? (horario de mercado y precio de hoy)
 export const canTrade = (symbol) => { const q = getQuote(symbol); return Boolean(q && q.price != null && tradeStatus(q).ok); };
 
