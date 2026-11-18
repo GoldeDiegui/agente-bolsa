@@ -152,6 +152,11 @@
   </section>
 
   <section class="card c12">
+    <h2>Marcador de aciertos <span id="scInfo" style="text-transform:none;letter-spacing:0;font-weight:400"></span></h2>
+    <div id="scBody" style="font-size:13px"></div>
+  </section>
+
+  <section class="card c12">
     <h2>Historial de operaciones</h2>
     <div class="scroll"><table id="ord"></table></div>
   </section>
@@ -189,6 +194,29 @@ function renderCoverage(c) {
   $('k-an').textContent = `${c.analyzed}/${c.total}`;
   $('anInfo').textContent = `· ${c.analyzed} de ${c.total} valores con datos fundamentales` + (c.analyzed < c.total ? ' (se siguen descargando en segundo plano)' : '');
 }
+const HNAME = { 5: '5 sesiones (≈1 semana)', 20: '20 sesiones (≈1 mes)', 60: '60 sesiones (≈3 meses)' };
+const CNAME = { score: 'Puntuación total', valuation: 'Valoración', growth: 'Crecimiento', quality: 'Calidad', analysts: 'Analistas', earnings: 'Resultados', sentiment: 'Noticias' };
+const sg = (x, d = 2) => (x == null ? '–' : (x > 0 ? '+' : '') + x.toFixed(d));
+function renderScore(sc) {
+  if (!sc) return;
+  $('scInfo').textContent = '· ¿predicen algo los veredictos? Rentabilidad de cada valor frente a su índice (S&P 500 o IBEX 35)';
+  const hs = Object.entries(sc.horizons).filter(([, d]) => d.n > 0);
+  let html = `<p style="margin:0 0 8px;color:var(--mut)">${esc(sc.status)}</p>`;
+  if (!hs.length) html += '<p style="margin:0;color:var(--mut)">Todavía no hay resultados maduros. Si el modelo sirve, los valores "Atractiva" deberían superar al índice y los "Evitar" quedarse por debajo.</p>';
+  for (const [h, d] of hs) {
+    const a = d.groups.Atractiva, enough = a && a.n >= sc.minSample;
+    html += `<h4 style="margin:14px 0 6px;font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em">A ${HNAME[h] ?? h + ' sesiones'} · ${d.n} observaciones</h4>`;
+    html += '<div class="scroll" style="max-height:none"><table><tr><th>Veredicto</th><th class="r">Valores</th><th class="r">Rentab. extra media</th><th class="r">Superan al índice</th></tr>' +
+      ['Atractiva', 'Neutral', 'Precaución', 'Cara', 'Evitar'].filter(v => d.groups[v]).map(v => { const g = d.groups[v];
+        return `<tr><td><span class="vd ${v}">${v}</span></td><td class="r">${g.n}</td><td class="r ${g.mean >= 0 ? 'up' : 'down'}">${sg(g.mean)} %${g.ci != null ? ` <small style="color:var(--mut)">±${g.ci}</small>` : ''}</td><td class="r">${g.hit} %</td></tr>`; }).join('') + '</table></div>';
+    html += `<div style="margin-top:6px;color:var(--mut)">Correlación entre puntuación y rentabilidad extra (−1 a +1; positiva = el modelo acierta el orden): ` +
+      Object.entries(d.ic).filter(([, v]) => v != null).map(([k, v]) => `<span style="margin-right:12px">${CNAME[k] ?? k} <b class="${v > 0.05 ? 'up' : v < -0.05 ? 'down' : ''}">${sg(v)}</b></span>`).join('') + '</div>';
+    html += `<div style="margin-top:4px;font-size:12px;color:${enough ? 'var(--txt)' : 'var(--mut)'}">${enough ? 'Muestra suficiente para una primera lectura (no es una prueba definitiva).' : `Muestra insuficiente todavía (${a ? a.n : 0} valores "Atractiva"; se piden ${sc.minSample}): no saques conclusiones aún.`}</div>`;
+  }
+  html += '<p style="margin:12px 0 0;font-size:11px;color:var(--mut)">Prueba hacia adelante: cada semana se guarda el veredicto de cada valor y, pasadas 5, 20 y 60 sesiones, se compara con su índice (con dividendos, entrando al cierre anterior). Las cohortes semanales se solapan y los mercados pesan mucho, así que hacen falta muchas semanas para que el resultado sea fiable. No es asesoramiento financiero.</p>';
+  $('scBody').innerHTML = html;
+}
+async function loadScore() { try { renderScore(STATIC ? STATE?.scorecard : await (await fetch('/api/scorecard')).json()); } catch { /* se reintenta */ } }
 let opTimer = 0;
 function staticOpps() {
   const v = $('opVerdict').value, mk = $('opMarket').value, by = $('opSort').value;
@@ -373,7 +401,7 @@ async function loadStatic() {
     eqChart.data.labels = []; eqChart.data.datasets.forEach(d => d.data = []);
     s.curve.forEach(addPoint); eqChart.update();
     renderPortfolio(s.portfolio); renderRisk(s.risk, s.portfolio); renderMarket(s.quotes, s.market);
-    renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); renderBanner(s);
+    renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); renderScore(s.scorecard); renderBanner(s);
     $('live').textContent = '● publicado ' + ago(s.updatedAt); $('live').className = (Date.now() - s.updatedAt < 3 * 3600e3 ? 'up' : 'down');
   };
   await refresh();
@@ -386,7 +414,7 @@ async function load() {
   initCharts();
   s.curve.forEach(addPoint); eqChart.update();
   renderPortfolio(s.portfolio); renderRisk(s.risk, s.portfolio); renderMarket(s.quotes, s.market);
-  renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); setInterval(loadOpps, 30000);
+  renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); setInterval(loadOpps, 30000); loadScore(); setInterval(loadScore, 600000);
   if (s.agentMode === 'reglas') addMsg('Modo gratuito: soy un gestor basado en reglas (stop-loss -8%, toma de beneficios +15%, máx. 25% por valor, 15% de efectivo mínimo). Decido con análisis fundamental (valoración frente al sector, crecimiento, calidad, analistas, resultados y noticias). Prueba "oportunidades", "analiza apple", "¿está cara nvidia?", "por qué compraste X", "revisa la cartera" o "estado de los datos". Revisión automática cada 5 minutos.', 'a');
 
   const es = new EventSource('/api/stream');
