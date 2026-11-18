@@ -6,6 +6,7 @@ import { getSummary, snapshot, getOrders, getEquityCurve, getRisk, placeOrder, a
 import { chat, autonomousReview, agentEnabled, agentMode } from './agent.js';
 import { startFundamentals, flushFundamentals, fundamentalsStats } from './fundamentals.js';
 import { checkCorporateEvents } from './corporate.js';
+import { maybeSnapshot, evaluate, summary as scoreSummary } from './scorecard.js';
 import { analyze, analysisText, brief, rank, shortlist, analysisCoverage } from './analysis.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -55,6 +56,7 @@ app.get('/api/opportunities', (req, res) => {
   const list = rank({ limit: Math.min(Number(req.query.limit) || 10, 30), market: req.query.market, sector: req.query.sector, verdicts, sortBy: req.query.sortBy === 'valuation' ? 'valuation' : 'score' });
   res.json(list.map((a) => ({ symbol: a.symbol, name: a.name, sector: a.sector, market: a.market, verdict: a.verdict, score: a.score, scores: a.scores, why: a.reasons.filter((r) => r.type === 'pos').slice(0, 2).map((r) => r.short ?? r.text) })));
 });
+app.get('/api/scorecard', (_req, res) => res.json(scoreSummary()));
 app.get('/api/data-status', (_req, res) => res.json(fundamentalsStats()));
 
 app.get('/api/state', (_req, res) => {
@@ -150,6 +152,12 @@ async function runEvents() {
     for (const e of applied) logDecision(`${e.type === 'split' ? 'Split' : 'Dividendo'} en ${e.symbol}: ${e.text}`);
   } catch (e) { console.warn('Revisión de splits/dividendos fallida:', e.message); }
 }
+// Marcador de aciertos: cohorte semanal y evaluación de resultados maduros (cada hora)
+async function runScorecard() {
+  try { maybeSnapshot(); await evaluate({ budgetMs: 120000 }); } catch (e) { console.warn('Marcador fallido:', e.message); }
+}
+setTimeout(runScorecard, 90000);
+setInterval(runScorecard, 60 * 60 * 1000);
 setTimeout(runEvents, 20000);
 setInterval(runEvents, 10 * 60 * 1000);
 

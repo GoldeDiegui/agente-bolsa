@@ -66,13 +66,22 @@ El gestor puede trabajar solo en los servidores gratuitos de GitHub Actions. No 
 - **Guarda anti-venta falsa:** si un valor cae de golpe a ~1/2, 1/3, 1/5, 1/10… de su coste y los eventos no se han podido revisar en los últimos 45 min, el gestor no vende por stop-loss hasta confirmarlo (podría ser un split sin ajustar).
 - Aparecen en el historial como SPLIT y DIVIDENDO.
 
+## Marcador de aciertos (¿funciona el modelo?)
+
+`scorecard.js` mide con datos reales si los veredictos predicen algo. Es una prueba hacia adelante (los fundamentales del pasado no están disponibles gratis, así que no hay backtest histórico).
+- Cada semana se guarda una **cohorte**: veredicto, puntuación y componentes de todos los valores *Atractiva / Cara / Evitar / Precaución* y una muestra fija de 60 *Neutral* (`data/scorecard.json`, en la rama `estado` en la nube).
+- A 5, 20 y 60 sesiones se calcula la rentabilidad de cada valor (con dividendos, entrando al cierre anterior) frente a su índice: SPY para el S&P 500 y ^IBEX para el IBEX 35.
+- Se muestra, por veredicto: nº de valores, rentabilidad extra media (con margen ±) y % que supera al índice; y la **correlación de Spearman** entre puntuación y rentabilidad extra, total y por componente (valoración, crecimiento, calidad, analistas, resultados, noticias). Si un componente sale negativo de forma sostenida, es candidato a perder peso.
+- Hasta tener ~30 valores "Atractiva" por horizonte, la web avisa de que la muestra es insuficiente. Las cohortes semanales se solapan y el mercado pesa mucho: hacen falta muchas semanas para que sea fiable.
+- En local: `npm.cmd run marcador` (y `-- --evaluar` para descargar resultados ya maduros). En la nube se evalúa en las pasadas de "datos".
+
 ## Arquitectura
 
 - `universe.json`: los valores disponibles (S&P 500 con su sector GICS + IBEX 35) y SPY como referencia. Se puede editar a mano: `symbol` es el ticker de Yahoo Finance (`SAN.MC` para la bolsa española, `BRK-B` con guion).
 - `market.js`: precios desde Yahoo Finance. Cada 5 s refresca lo que tienes en cartera y un lote de 15 valores del resto (`UNIVERSE_BATCH`), así que los ~540 valores se cargan en unos 3 minutos sin saturar Yahoo. Los valores del IBEX cotizan en EUR y se convierten a USD con el cambio EUR/USD. Solo 10 valores tienen respaldo simulado si no hay conexión; el resto queda "sin datos" y no se puede operar hasta tener precio.
 - `portfolio.js`: efectivo, posiciones, órdenes (comisión 1 USD), límite del 30 % por valor, métricas de riesgo y comparación con SPY. También las **órdenes límite**: una compra límite se ejecuta cuando el precio baja al nivel indicado (o menos) y una venta límite cuando sube a él (o más). El límite va en la moneda del valor (EUR en el IBEX). No reservan efectivo, caducan a los 30 días y se guardan con la cartera. Se crean desde la web (tipo "Límite") o por chat: `compra 10 AAPL a 300`, `órdenes pendientes`, `cancela la orden 2`.
 - `fundamentals.js`: descarga y caché de fundamentales, calendario de resultados y noticias (Finnhub/Yahoo, con límites de ritmo y reintentos). `analysis.js`: modelo de puntuación y veredictos. `diagnostico.js`: prueba de conexión con los datos.
-- `hours.js`: horarios de NYSE y Bolsa de Madrid y condiciones para operar. `corporate.js`: splits y dividendos. `cycle.js` y `gate.js`: modo "una pasada" para la nube. `.github/workflows/`: ciclo del gestor, publicación de la web y latido mensual.
+- `hours.js`: horarios de NYSE y Bolsa de Madrid y condiciones para operar. `corporate.js`: splits y dividendos. `scorecard.js`: marcador de aciertos. `cycle.js` y `gate.js`: modo "una pasada" para la nube. `.github/workflows/`: ciclo del gestor, publicación de la web y latido mensual.
 - `rules.js`: gestor gratuito (revisión autónoma, decisiones por tesis y chat por palabras clave).
 - `agent.js`: elige entre reglas y Claude según haya clave.
 - `server.js`: API REST + Server-Sent Events para el tiempo real.

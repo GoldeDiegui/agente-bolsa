@@ -8,7 +8,8 @@
     "start": "node server.js",
     "diagnostico": "node diagnostico.js",
     "ciclo": "node cycle.js trade",
-    "ciclo-datos": "node cycle.js datos"
+    "ciclo-datos": "node cycle.js datos",
+    "marcador": "node scorecard-cli.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.60.0",

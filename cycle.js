@@ -7,6 +7,7 @@ import path from 'node:path';
 import { refreshPrices, getAllQuotes, marketStats, UNIVERSE } from './market.js';
 import { getSummary, snapshot, getOrders, getEquityCurve, getRisk, getPending, checkPending, getWatchedSymbols, addAgentLog, getAgentLog, getEvents, flushState } from './portfolio.js';
 import { checkCorporateEvents } from './corporate.js';
+import { maybeSnapshot, evaluate, summary as scoreSummary } from './scorecard.js';
 import { runFundamentalsBudget, flushFundamentals, fundamentalsStats, hasFinnhub } from './fundamentals.js';
 import { analyze, brief, rank, shortlist, analysisCoverage } from './analysis.js';
 import { autonomousReview, agentEnabled, agentMode } from './agent.js';
@@ -14,8 +15,8 @@ import { MARKETS, marketClock, openMarkets, scheduleText, ENFORCE } from './hour
 
 const mode = process.argv[2] || process.env.CYCLE_MODE || 'trade';
 const SITE_DIR = process.env.SITE_DIR || path.join(path.dirname(new URL(import.meta.url).pathname), 'site');
-const FUND_BUDGET_MS = Number(process.env.FUND_BUDGET_SECONDS || (mode === 'trade' ? 90 : 420)) * 1000;
-const MAX_MS = Number(process.env.CYCLE_MAX_SECONDS || 540) * 1000; // tope duro
+const FUND_BUDGET_MS = Number(process.env.FUND_BUDGET_SECONDS || (mode === 'trade' ? 90 : 330)) * 1000;
+const MAX_MS = Number(process.env.CYCLE_MAX_SECONDS || 600) * 1000; // tope duro
 const LOG_EVERY_MS = 60 * 60 * 1000; // sin operaciones, se anota "sin cambios" como mucho cada hora
 
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
@@ -49,6 +50,15 @@ try {
     const { applied, failures } = await checkCorporateEvents();
     for (const e of applied) { log(`${e.type === 'split' ? 'Split' : 'Dividendo'} ${e.symbol}: ${e.text}`); addAgentLog({ t: Date.now(), summary: `${e.type === 'split' ? 'Split' : 'Dividendo'} en ${e.symbol}: ${e.text}` }); }
     if (failures) log(`Eventos: ${failures} valor(es) sin revisar (se reintenta en el próximo ciclo)`);
+  }
+  // 4) Marcador de aciertos: cohorte semanal y, fuera de horario de mercado, evaluación de las ya maduras
+  {
+    const c = maybeSnapshot();
+    if (c) log(`Marcador: cohorte ${c.week} guardada (${c.rows.length} valores)`);
+    if (mode !== 'trade') {
+      const ev = await evaluate({ budgetMs: Number(process.env.SCORE_BUDGET_SECONDS || 90) * 1000 });
+      if (ev.fetched) log(`Marcador: ${ev.fetched} descargas, ${ev.resolved} resultados nuevos`);
+    }
   }
   if (mode === 'trade') {
     const before = getOrders().length;
@@ -98,7 +108,7 @@ function exportSite() {
     market: marketStats(), analysis: analysisCoverage(), portfolio: s, risk: getRisk(),
     orders: getOrders().slice(0, 300), events: getEvents().slice(0, 100), pending: getPending(),
     curve: curve.filter((_, i) => i % step === 0 || i === curve.length - 1),
-    agentLog: getAgentLog(), opportunities, analyses, data: fundamentalsStats(),
+    agentLog: getAgentLog(), scorecard: scoreSummary(), opportunities, analyses, data: fundamentalsStats(),
   };
   fs.mkdirSync(SITE_DIR, { recursive: true });
   const f = path.join(SITE_DIR, 'state.json');
