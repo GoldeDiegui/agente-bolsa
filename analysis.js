@@ -1,7 +1,7 @@
 // Motor de análisis: valoración relativa al sector, crecimiento, calidad, analistas, resultados y catalizadores.
 // Es un modelo de reglas transparente (cada punto se explica); NO predice precios ni es asesoramiento financiero.
 import { UNIVERSE, getQuote } from './market.js';
-import { getFundamentals, getNews, getNextEarnings, fundamentalsStats } from './fundamentals.js';
+import { getFundamentals, getNews, getEstimates, getNextEarnings, fundamentalsStats } from './fundamentals.js';
 
 const BY = new Map(UNIVERSE.map((u) => [u.symbol, u]));
 const DAY = 86400e3;
@@ -28,6 +28,9 @@ const wavg = (parts) => {
 const LEX = [
   [/\b(beats?|tops?|surpass(es|ed)?|exceeds?|crush(es|ed)?)\b.*\b(estimates?|expectations?|forecasts?|consensus)\b/, 2, 'resultados'],
   [/\b(raises?|lifts?|boosts?|hikes?)\b.*\b(guidance|outlook|forecast)\b/, 2.5, 'previsiones'],
+  [/\bguid(es|ed|ing)\b.*\b(above|higher|ahead of)\b|\b(strong|upbeat|bullish|robust)\b.*\b(outlook|guidance)\b/, 2, 'previsiones'],
+  [/\b(reaffirm(s|ed)?|reiterates?|reiterated|maintains?)\b.*\b(guidance|outlook)\b/, 0.5, 'previsiones'],
+  [/\b(confirma|mantiene|reitera)\b.*\b(previsi|gu[ií]a|objetivos?)/, 0.5, 'previsiones'],
   [/\b(upgrade[sd]?|upgrading)\b|\braised? to (buy|outperform|overweight)\b|\binitiat(es|ed) .* (buy|outperform|overweight)\b/, 2, 'analistas'],
   [/\b(raises?|lifts?|boosts?|hikes?)\b.*\bprice target\b/, 1.5, 'analistas'],
   [/\brecord (revenue|profit|earnings|sales|quarter|high|orders?)\b/, 1.5, 'resultados'],
@@ -42,6 +45,9 @@ const LEX = [
   [/\bbeneficios? (r[eé]cord|hist[oó]ric)|\bm[aá]ximos hist[oó]ricos\b|\bmejora (su )?(recomendaci|rating)/, 1.5, 'resultados'],
   [/\b(miss(es|ed)?|falls? short of|lags?)\b.*\b(estimates?|expectations?|forecasts?|consensus)\b/, -2.5, 'resultados'],
   [/\b(cuts?|lowers?|slashes?|trims?|reduces?)\b.*\b(guidance|outlook|forecast)\b/, -3, 'previsiones', true],
+  [/\bguid(es|ed|ing)\b.*\b(below|lower|short of)\b/, -2.5, 'previsiones', true],
+  [/\b(withdraws?|withdrew|suspends?|pulls?)\b.*\b(guidance|outlook)\b|\b(retira|suspende)\b.*\b(previsi|gu[ií]a)/, -3, 'previsiones', true],
+  [/\b(weak|disappointing|soft|cautious|bleak|muted)\b.*\b(outlook|guidance)\b/, -2, 'previsiones'],
   [/\bprofit warning\b|\bwarns?\b.*\b(profit|earnings|revenue|sales|demand)\b/, -3, 'previsiones', true],
   [/\b(downgrade[sd]?|downgrading)\b|\bcut to (sell|underperform|underweight|neutral)\b/, -2, 'analistas'],
   [/\b(cuts?|lowers?|slashes?)\b.*\bprice target\b/, -1.5, 'analistas'],
@@ -208,6 +214,24 @@ function analystsScore(f, priceNative) {
   return { score: wavg(parts), reasons };
 }
 
+// Revisiones de estimaciones de beneficio: si los analistas suben su previsión tras resultados/guidance, es buena señal.
+function revisionsScore(est) {
+  if (!est) return { score: null, reasons: [] };
+  const parts = [], reasons = [];
+  const days = est.eps90 != null ? 90 : 30, ch = est.eps90 ?? est.eps30;
+  if (ch != null) {
+    parts.push({ s: lin(ch, [[-15, 4], [-5, 28], [0, 50], [3, 64], [8, 82], [20, 96]]), w: 0.6 });
+    reasons.push({ type: ch >= 3 ? 'pos' : ch <= -3 ? 'neg' : 'info', text: `Estimaciones de beneficio por acción de los analistas ${sgn(ch)} % en ${days} días (${ch >= 0 ? 'la suben' : 'la recortan'})`, short: `estimaciones de BPA ${sgn(ch, 0)} % en ${days} d` });
+  }
+  const tot = est.up30 + est.down30;
+  if (tot >= 3) {
+    const net = (est.up30 - est.down30) / tot;
+    parts.push({ s: 50 + 45 * net, w: 0.4 });
+    reasons.push({ type: net >= 0.4 ? 'pos' : net <= -0.4 ? 'neg' : 'info', text: `Revisiones de analistas en 30 días: ${est.up30} al alza y ${est.down30} a la baja`, short: `${est.up30} revisiones al alza y ${est.down30} a la baja (30 d)` });
+  }
+  return { score: wavg(parts), reasons };
+}
+
 function earningsScore(f) {
   const e = f.earnings;
   if (!e?.total) return { score: null, reasons: [] };
@@ -218,18 +242,18 @@ function earningsScore(f) {
 }
 
 // ---------- análisis completo ----------
-const WEIGHTS = { valuation: 0.30, growth: 0.25, quality: 0.20, analysts: 0.10, earnings: 0.10, sentiment: 0.05 };
+const WEIGHTS = { valuation: 0.27, growth: 0.22, quality: 0.18, analysts: 0.08, earnings: 0.08, revisions: 0.12, sentiment: 0.05 };
 const memo = new Map();
 
 export function analyze(symbol) {
   const u = BY.get(symbol);
   if (!u) return null;
   // se reutiliza el resultado solo si no han llegado datos nuevos (fundamentales o noticias) y es reciente
-  const f = getFundamentals(symbol), n = getNews(symbol);
+  const f = getFundamentals(symbol), n = getNews(symbol), e = getEstimates(symbol);
   const hit = memo.get(symbol);
-  if (hit && hit.f === f && hit.n === n && Date.now() - hit.t < 60e3) return hit.a;
+  if (hit && hit.f === f && hit.n === n && hit.e === e && Date.now() - hit.t < 60e3) return hit.a;
   const a = compute(u);
-  memo.set(symbol, { t: Date.now(), a, f, n });
+  memo.set(symbol, { t: Date.now(), a, f, n, e });
   return a;
 }
 
@@ -242,8 +266,9 @@ function compute(u) {
   const m = f.m, reasons = [];
   const val = valuation(u, m), gro = growth(m), qua = quality(m, u), ana = analystsScore(f, q?.priceNative), ear = earningsScore(f);
   const news = scoreNews(getNews(u.symbol)?.items);
-  const scores = { valuation: val.score, growth: gro.score, quality: qua.score, analysts: ana.score, earnings: ear.score, sentiment: news?.score ?? null };
-  reasons.push(...val.reasons, ...gro.reasons, ...qua.reasons, ...ana.reasons, ...ear.reasons);
+  const rev = revisionsScore(getEstimates(u.symbol));
+  const scores = { valuation: val.score, growth: gro.score, quality: qua.score, analysts: ana.score, earnings: ear.score, revisions: rev.score, sentiment: news?.score ?? null };
+  reasons.push(...val.reasons, ...gro.reasons, ...qua.reasons, ...ana.reasons, ...ear.reasons, ...rev.reasons);
 
   if (m.high52 && q?.priceNative) {
     const off = (q.priceNative / m.high52 - 1) * 100;
@@ -319,7 +344,7 @@ export function analysisText(a) {
   const s = a.scores, p = (k, n) => (s[k] == null ? null : `${n} ${s[k]}`);
   const lines = [
     `${head} — Veredicto: ${a.verdict.toUpperCase()} · puntuación ${a.score}/100 (cobertura de datos ${Math.round(a.confidence * 100)} %)`,
-    [p('valuation', 'Valoración'), p('growth', 'Crecimiento'), p('quality', 'Calidad'), p('analysts', 'Analistas'), p('earnings', 'Resultados'), p('sentiment', 'Noticias')].filter(Boolean).join(' · '),
+    [p('valuation', 'Valoración'), p('growth', 'Crecimiento'), p('quality', 'Calidad'), p('analysts', 'Analistas'), p('earnings', 'Resultados'), p('revisions', 'Revisiones'), p('sentiment', 'Noticias')].filter(Boolean).join(' · '),
     ...a.reasons.slice(0, 9).map((r) => `${ICON[r.type]} ${r.text}`),
   ];
   if (a.catalysts.length) lines.push('Catalizadores:', ...a.catalysts.slice(0, 5).map((c) => `• [${c.tag}] ${c.text}`));

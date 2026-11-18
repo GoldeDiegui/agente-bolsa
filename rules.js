@@ -134,6 +134,11 @@ export function autonomousReview() {
   const open = ENFORCE ? openMarkets() : null;
   if (actions.length) head = actions.join(' ');
   else if (open && !open.length) head = 'Mercados cerrados: no se opera hasta la próxima sesión (el gestor sigue recopilando datos y noticias).';
+  else if (ready && s.cash - (s.equity * CASH_FLOOR_PCT) / 100 < s.equity * 0.01) {
+    const top = rank({ limit: 8, verdicts: ['Atractiva'], minConfidence: MIN_CONFIDENCE }).filter((a) => !held[a.symbol]).slice(0, 3);
+    head = `Sin cambios: el efectivo está en el mínimo (${((s.cash / s.equity) * 100).toFixed(1)} %, colchón del ${CASH_FLOOR_PCT} %) y no hay margen para nuevas compras.` +
+      (top.length ? ` Candidatas en espera: ${top.map((a) => `${a.symbol} ${a.score}/100`).join(', ')}.` : '');
+  }
   else if (suspectSkips.length) head = `Sin cambios: ${suspectSkips.join(', ')} ha caído de golpe y podría ser un split sin verificar; no se vende por stop-loss hasta confirmar con los datos de eventos.`;
   else if (closedSkips) head = `Sin cambios: ${closedSkips} decisión(es) pendientes de que abra el mercado de ese valor.`;
   else if (!ready && !ALLOW_MOMENTUM_ONLY) head = `Sin cambios: el análisis fundamental aún cubre ${cov.analyzed}/${cov.total} valores y necesito al menos ${Math.ceil(cov.total * MIN_COVERAGE)} para comparar cada empresa con su sector. El gestor espera antes de comprar o vender por tesis (la gestión de riesgo sigue activa).`;

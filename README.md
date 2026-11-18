@@ -21,7 +21,7 @@ En Windows PowerShell, si `npm` da error de scripts, usa `npm.cmd install` y `np
 
 El gestor no compra "por tendencia": valora cada empresa con datos públicos y deja por escrito el porqué de cada operación (columna *Motivo* del historial y panel de decisiones).
 
-**Puntuación 0-100** = valoración 30 % + crecimiento 25 % + calidad 20 % + analistas 10 % + sorpresas en resultados 10 % + noticias 5 %.
+**Puntuación 0-100** = valoración 27 % + crecimiento 22 % + calidad 18 % + analistas 8 % + sorpresas en resultados 8 % + revisiones de estimaciones 12 % + noticias 5 %.
 - *Valoración:* PER, EV/EBITDA, precio/ventas y PEG **frente a la mediana de su sector** (calculada con el propio universo, por mercado cuando hay suficientes empresas).
 - *Crecimiento:* ingresos y beneficio por acción. *Calidad:* márgenes, ROE, deuda y liquidez.
 - *Analistas:* recomendación media y precio objetivo frente al precio actual. *Resultados:* cuántos trimestres superó estimaciones.
@@ -65,6 +65,13 @@ El gestor puede trabajar solo en los servidores gratuitos de GitHub Actions. No 
 - **Dividendo:** se abona en efectivo (en USD, al cambio actual) el día ex-dividendo, sin retención de impuestos.
 - **Guarda anti-venta falsa:** si un valor cae de golpe a ~1/2, 1/3, 1/5, 1/10… de su coste y los eventos no se han podido revisar en los últimos 45 min, el gestor no vende por stop-loss hasta confirmarlo (podría ser un split sin ajustar).
 - Aparecen en el historial como SPLIT y DIVIDENDO.
+
+## Guidance y revisiones de estimaciones
+
+La *guidance* oficial de las empresas (lo que la directiva prevé ingresar o ganar) no está disponible como dato en fuentes gratuitas: va dentro de las notas de resultados. Se aproxima de dos formas:
+- **Revisiones de estimaciones (componente "Revisiones", peso 12 %):** cuánto han cambiado en 30 y 90 días las estimaciones de beneficio por acción de los analistas (año en curso y siguiente) y cuántos las han subido o bajado en 30 días. Si tras resultados la empresa da buena guidance, las estimaciones suben. Datos de Yahoo (módulo `earningsTrend`). Se piden una vez al día **solo para lo que tienes en cartera y para los candidatos**; el resto de valores se puntúa sin este componente (los pesos se reescalan).
+- **Titulares de guidance:** el léxico reconoce "sube/recorta/retira/reitera previsiones", "guía por encima/por debajo" y "perspectivas débiles/fuertes". Las retiradas o recortes graves cuentan como riesgo grave y bloquean la compra.
+- Pesos actuales: valoración 27 %, crecimiento 22 %, calidad 18 %, analistas 8 %, resultados 8 %, revisiones 12 %, noticias 5 %. El marcador de aciertos mide también si las revisiones predicen algo.
 
 ## Marcador de aciertos (¿funciona el modelo?)
 

@@ -16,11 +16,12 @@ const FUND_TTL = 24 * HOUR;   // los fundamentales cambian despacio: una vez al 
 const NEWS_TTL = 3 * HOUR;    // noticias de lo que tienes en cartera o estás vigilando
 const RETRY_TTL = 6 * HOUR;   // tras un fallo, no se insiste hasta pasadas 6 h
 const CAL_TTL = 12 * HOUR;
+const EST_TTL = 24 * HOUR;    // revisiones de estimaciones de analistas: una vez al día
 
 const BY = new Map(UNIVERSE.map((u) => [u.symbol, u]));
 export const hasFinnhub = () => Boolean(FINNHUB_KEY);
 
-const cache = { fundamentals: {}, news: {}, calendar: { fetchedAt: 0, dates: {} } };
+const cache = { fundamentals: {}, news: {}, estimates: {}, calendar: { fetchedAt: 0, dates: {} } };
 const status = { errors: {}, paused: { finnhub: 0, yahoo: 0 } };
 
 // ---------- caché en disco ----------
@@ -30,6 +31,7 @@ function load() {
     const s = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     cache.fundamentals = s.fundamentals ?? {};
     cache.news = s.news ?? {};
+    cache.estimates = s.estimates ?? {};
     cache.calendar = s.calendar ?? { fetchedAt: 0, dates: {} };
     console.log(`Datos fundamentales recuperados (${Object.keys(cache.fundamentals).length} valores)`);
   } catch (e) {
@@ -253,6 +255,43 @@ async function fetchYahooFundamentals(symbol) {
   });
 }
 
+// Revisiones de las estimaciones de beneficio por acción (año en curso y siguiente): cuánto han cambiado en 30 y 90 días
+// y cuántos analistas las han subido o bajado. Si tras resultados la empresa da buena guidance, las estimaciones suben.
+export function normalizeYahooEstimates(r = {}) {
+  const trend = r.earningsTrend?.trend;
+  if (!Array.isArray(trend)) return null;
+  const yrs = trend.filter((t) => ['0y', '+1y'].includes(t.period));
+  const pct = (cur, base) => (cur == null || base == null ? null : Math.max(-100, Math.min(100, ((cur - base) / Math.max(Math.abs(base), 0.1)) * 100)));
+  const avg = (a) => { const v = a.filter((x) => x != null); return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null; };
+  const sum = (...ks) => yrs.reduce((s, t) => s + ks.reduce((q, k) => q + (raw(t.epsRevisions, k) ?? 0), 0), 0);
+  const out = {
+    eps30: avg(yrs.map((t) => pct(raw(t.epsTrend, 'current'), raw(t.epsTrend, '30daysAgo')))),
+    eps90: avg(yrs.map((t) => pct(raw(t.epsTrend, 'current'), raw(t.epsTrend, '90daysAgo')))),
+    up30: sum('upLast30days'), down30: sum('downLast30days'),
+    up7: sum('upLast7days'), down7: sum('downLast7days', 'downLast7Days'),
+    fwdGrowth: scale(raw(trend.find((t) => t.period === '+1y'), 'growth'), 100),
+  };
+  return out.eps30 == null && out.eps90 == null && !out.up30 && !out.down30 ? null : out;
+}
+
+async function fetchYahooEstimates(symbol) {
+  return viaProvider('yahoo', async () => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const { cookie, crumb } = await yahooAuth();
+      const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=earningsTrend&crumb=${encodeURIComponent(crumb)}`;
+      try {
+        const data = await http(url, { headers: { Cookie: cookie } });
+        const est = normalizeYahooEstimates(data?.quoteSummary?.result?.[0]);
+        if (!est) throw new Error('Yahoo no tiene estimaciones de este valor');
+        return { fetchedAt: Date.now(), ...est };
+      } catch (e) {
+        if ((e.status === 401 || e.status === 403) && attempt === 0) { yAuth = null; continue; }
+        throw e;
+      }
+    }
+  });
+}
+
 async function fetchYahooNews(symbol) {
   return viaProvider('yahoo', async () => {
     const j = await http(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(symbol)}&quotesCount=0&newsCount=10`);
@@ -265,6 +304,8 @@ async function fetchYahooNews(symbol) {
 export const providerFor = (symbol) => (BY.get(symbol)?.market === 'S&P 500' && FINNHUB_KEY ? 'finnhub' : 'yahoo');
 export const getFundamentals = (symbol) => { const e = cache.fundamentals[symbol]; return e?.m ? e : null; };
 export const getNews = (symbol) => cache.news[symbol] ?? null;
+// Revisiones de estimaciones de analistas (sustituto gratuito de la "guidance"): solo hay datos de lo que se vigila o es candidato
+export const getEstimates = (symbol) => { const e = cache.estimates[symbol]; return e && (e.eps30 != null || e.eps90 != null || e.up30 || e.down30) ? e : null; };
 
 export function getNextEarnings(symbol) {
   const c = cache.calendar.dates?.[symbol];
@@ -321,6 +362,22 @@ async function refreshFund(s) {
   markDirty();
 }
 
+const needsEst = (s, now) => {
+  if (status.paused.yahoo > now) return false; // las estimaciones siempre se piden a Yahoo
+  const e = cache.estimates[s];
+  return !e || now - (e.failedAt ?? e.fetchedAt) > (e.failedAt ? RETRY_TTL : EST_TTL);
+};
+async function refreshEstimates(s) {
+  const prev = cache.estimates[s];
+  try { cache.estimates[s] = await fetchYahooEstimates(s); }
+  catch (e) {
+    if (e.paused || e.status === 429) return;
+    cache.estimates[s] = { ...(prev?.fetchedAt ? prev : {}), failedAt: Date.now() };
+    noteError('estimaciones', s, e);
+  }
+  markDirty();
+}
+
 async function refreshNews(s) {
   const prev = cache.news[s];
   try {
@@ -348,6 +405,8 @@ function makeWorker({ getWatched = () => [], getShortlist = () => [] } = {}) {
       if (w) { await refreshFund(w); return true; }
       const n = [...new Set([...watched, ...getShortlist()])].find((s) => BY.has(s) && needsNews(s, now));
       if (n) { await refreshNews(n); return true; }
+      const est = [...new Set([...watched, ...getShortlist()])].find((s) => BY.has(s) && needsEst(s, now));
+      if (est) { await refreshEstimates(est); return true; }
       for (let i = 0; i < symbols.length; i++) {
         const s = symbols[(cursor + i) % symbols.length];
         if (needsFund(s, now)) { cursor = (cursor + i + 1) % symbols.length; await refreshFund(s); return true; }
