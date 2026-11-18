@@ -195,7 +195,7 @@ function renderCoverage(c) {
   $('anInfo').textContent = `· ${c.analyzed} de ${c.total} valores con datos fundamentales` + (c.analyzed < c.total ? ' (se siguen descargando en segundo plano)' : '');
 }
 const HNAME = { 5: '5 sesiones (≈1 semana)', 20: '20 sesiones (≈1 mes)', 60: '60 sesiones (≈3 meses)' };
-const CNAME = { score: 'Puntuación total', valuation: 'Valoración', growth: 'Crecimiento', quality: 'Calidad', analysts: 'Analistas', earnings: 'Resultados', sentiment: 'Noticias' };
+const CNAME = { score: 'Puntuación total', valuation: 'Valoración', growth: 'Crecimiento', quality: 'Calidad', analysts: 'Analistas', earnings: 'Resultados', revisions: 'Revisiones de estimaciones', sentiment: 'Noticias' };
 const sg = (x, d = 2) => (x == null ? '–' : (x > 0 ? '+' : '') + x.toFixed(d));
 function renderScore(sc) {
   if (!sc) return;
@@ -236,7 +236,7 @@ async function loadOpps() {
 }
 for (const id of ['opVerdict', 'opMarket', 'opSort']) document.addEventListener('DOMContentLoaded', () => $(id).addEventListener('change', loadOpps));
 
-const NAMES = { valuation:'Valoración', growth:'Crecimiento', quality:'Calidad', analysts:'Analistas', earnings:'Resultados', sentiment:'Noticias' };
+const NAMES = { valuation:'Valoración', growth:'Crecimiento', quality:'Calidad', analysts:'Analistas', earnings:'Resultados', revisions:'Revisiones', sentiment:'Noticias' };
 async function openDetail(symbol) {
   $('sheet').innerHTML = '<div style="color:var(--mut)">Cargando análisis…</div>'; $('modal').classList.add('open');
   try {
