@@ -237,6 +237,70 @@ async function loadOpps() {
 for (const id of ['opVerdict', 'opMarket', 'opSort']) document.addEventListener('DOMContentLoaded', () => $(id).addEventListener('change', loadOpps));
 
 const NAMES = { valuation:'Valoración', growth:'Crecimiento', quality:'Calidad', analysts:'Analistas', earnings:'Resultados', revisions:'Revisiones', sentiment:'Noticias' };
+
+// ---------- Cuentas de la empresa (ingresos, gastos, balance) ----------
+let FIN_ALL = null, FIN_P = null, finMode = 'qy'; // FIN_ALL: datos; FIN_P: la descarga en curso
+const FIN_ROWS = [
+  ['Cuenta de resultados'],
+  ['rev','Ingresos'], ['cogs','Coste de ventas',1], ['gp','Beneficio bruto'], ['opex','Gastos operativos',1], ['totexp','Gastos totales',1],
+  ['opinc','Resultado operativo'], ['ebitda','EBITDA'], ['ni','Beneficio neto'], ['eps','BPA diluido',0,'eps'],
+  ['Balance'],
+  ['assets','Activos totales'], ['liab','Pasivos totales',1], ['eq','Patrimonio neto'], ['cash','Efectivo'], ['debt','Deuda total',1],
+  ['Flujo de caja'],
+  ['ocf','Caja de operaciones'], ['fcf','Caja libre'],
+];
+const finFmt = (v, cur, kind) => v == null ? '–' : kind === 'eps' ? v.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  : new Intl.NumberFormat('es-ES', { style: 'currency', currency: cur || 'USD', notation: 'compact', maximumFractionDigits: 2 }).format(v);
+const finLabel = (d) => new Date(d + 'T12:00:00Z').toLocaleDateString('es-ES', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+function renderFin(sym) {
+  const box = $('fin'); if (!box || !FIN_ALL) return;
+  const e = FIN_ALL.data?.[sym];
+  if (!e) { box.innerHTML = '<h4>Cuentas</h4><p style="color:var(--mut);font-size:12px">Todavía no hay cuentas descargadas de este valor (se completan poco a poco).</p>'; return; }
+  const idx = Object.fromEntries(FIN_ALL.fields.map((k, i) => [k, i + 1]));
+  const annual = finMode === 'a';
+  const rows = (annual ? e.a : e.q).slice().sort((x, y) => (x[0] < y[0] ? 1 : -1)); // más reciente primero
+  const shown = rows.slice(0, annual ? 4 : 5);
+  const prevOf = (r, i) => {
+    if (finMode === 'qy') { const t = new Date(r[0]).getTime(); return rows.find((x) => { const dd = (t - new Date(x[0]).getTime()) / 864e5; return dd > 330 && dd < 400; }); }
+    return rows[i + 1];
+  };
+  const chg = (v, p, inv) => {
+    if (v == null || p == null) return '';
+    if (!(p > 0)) return '<small style="color:var(--mut)">n.s.</small>';
+    const c = ((v - p) / p) * 100, good = inv ? c < 0 : c > 0;
+    return `<small class="${Math.abs(c) < 0.05 ? '' : good ? 'up' : 'down'}">${c > 0 ? '+' : ''}${c.toLocaleString('es-ES', { maximumFractionDigits: 1 })} %</small>`;
+  };
+  const vs = { qy: 'frente al mismo trimestre del año anterior', qs: 'frente al trimestre anterior', a: 'frente al año anterior' }[finMode];
+  let html = `<h4>Cuentas <select id="finMode" style="font-size:12px;margin-left:8px"><option value="qy">Trimestral · interanual</option><option value="qs">Trimestral · secuencial</option><option value="a">Anual</option></select></h4>`;
+  if (!shown.length) html += '<p style="color:var(--mut);font-size:12px">Yahoo no publica estos periodos para este valor.</p>';
+  else {
+    html += `<div style="overflow-x:auto"><table class="fin" style="width:100%;font-size:12px"><tr><th></th>${shown.map((r) => `<th class="r">${finLabel(r[0])}</th>`).join('')}</tr>`;
+    for (const def of FIN_ROWS) {
+      if (def.length === 1) { html += `<tr><td colspan="${shown.length + 1}" style="color:var(--mut);font-weight:600;padding-top:8px">${def[0]}</td></tr>`; continue; }
+      const [k, name, inv, kind] = def;
+      if (shown.every((r) => r[idx[k]] == null)) continue;
+      html += `<tr><td>${name}</td>${shown.map((r, i) => { const p = prevOf(r, i); return `<td class="r">${finFmt(r[idx[k]], e.c, kind)}<br>${chg(r[idx[k]], p ? p[idx[k]] : null, inv)}</td>`; }).join('')}</tr>`;
+    }
+    html += `</table></div><p style="color:var(--mut);font-size:11px;margin:6px 0 0">Variación ${vs}. «n.s.» = no significativa (base cero o negativa). En costes y deuda, subir se marca en rojo. Fuente: Yahoo Finance; ${e.c ?? ''}.</p>`;
+  }
+  box.innerHTML = html;
+  $('finMode').value = finMode;
+  $('finMode').onchange = (ev) => { finMode = ev.target.value; renderFin(sym); };
+}
+async function loadFin(sym) {
+  try {
+    if (STATIC) {
+      FIN_P ??= fetch(stateUrl().replace('state.json', 'financials.json')).then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).catch((e) => { FIN_P = null; throw e; });
+      FIN_ALL = await FIN_P;
+    } else {
+      const r = await fetch('/api/financials/' + encodeURIComponent(sym));
+      const j = await r.json();
+      FIN_ALL = r.ok ? j : { fields: [], data: {} };
+    }
+    renderFin(sym);
+  } catch { if ($('fin')) $('fin').innerHTML = '<h4>Cuentas</h4><p style="color:var(--mut);font-size:12px">No se pudieron cargar las cuentas ahora mismo.</p>'; }
+}
+
 let ALL_AN = null; // análisis de todo el universo (se descarga solo cuando hace falta)
 async function openDetail(symbol) {
   $('sheet').innerHTML = '<div style="color:var(--mut)">Cargando análisis…</div>'; $('modal').classList.add('open');
@@ -260,10 +324,12 @@ async function openDetail(symbol) {
       (rs('pos') ? `<h4>A favor</h4><ul class="rs">${rs('pos')}</ul>` : '') +
       (rs('neg') ? `<h4>En contra</h4><ul class="rs">${rs('neg')}</ul>` : '') +
       (rs('info') ? `<h4>Otros datos</h4><ul class="rs">${rs('info')}</ul>` : '') +
+      '<div id="fin"><h4>Cuentas</h4><p style="color:var(--mut);font-size:12px">Cargando…</p></div>' +
       (a.catalysts?.length ? `<h4>Catalizadores y eventos</h4><ul class="rs">${a.catalysts.map(c => `<li class="info">${esc(c.text)}</li>`).join('')}</ul>` : '') +
       (a.headlines?.length ? `<h4>Titulares recientes</h4><ul class="rs">${a.headlines.map(h => `<li class="info">${esc(h.headline)} <small style="color:var(--mut)">${esc(h.source ?? '')}</small></li>`).join('')}</ul>` : '') +
       `<p style="color:var(--mut);font-size:11px;margin-top:14px">Modelo orientativo basado en reglas y datos públicos (medianas del sector calculadas con el propio universo). No predice el futuro ni es asesoramiento financiero.</p>`;
     $('xbtn').onclick = closeDetail;
+    loadFin(symbol);
   } catch (e) { $('sheet').innerHTML = `<button class="sec xbtn" id="xbtn">Cerrar</button><p class="down">No se pudo cargar el análisis: ${esc(e.message)}</p>`; $('xbtn').onclick = closeDetail; }
 }
 const closeDetail = () => $('modal').classList.remove('open');
