@@ -58,6 +58,15 @@ El gestor puede trabajar solo en los servidores gratuitos de GitHub Actions. No 
 - La cartera de la nube es independiente de la de tu ordenador (`data/state.json`). Para empezar con la tuya, copia ese fichero a `seed/state.json` antes de la primera ejecución.
 - Comandos: `npm.cmd run ciclo` (una pasada de operar, solo si hay mercado abierto; `FORCE_RUN=1` para forzarla) y `npm.cmd run ciclo-datos`.
 
+## Rotación de cartera
+
+Con la cartera llena (efectivo en el mínimo, sin margen para comprar), el gestor puede **cambiar la posición más débil por una candidata claramente mejor**:
+- Solo si la candidata es *Atractiva*, sin resultados inminentes, con precio de hoy y mercado abierto, y puntúa **al menos 12 puntos más** que la posición más débil (`ROTATION_GAP`).
+- La posición a vender debe llevar más de 24 h en cartera y no haber sido comprada por rotación en los últimos 3 días.
+- Máximo 2 rotaciones cada 24 horas, y la rotación no deja ningún sector por encima del 35 % de la cartera.
+- Vende toda la posición débil y compra la candidata con el tamaño habitual según convicción; el resto queda como efectivo para las siguientes revisiones.
+- Cada operación lleva el motivo "Rotación: X puntúa a/100 y Y b/100". Si no rota, el registro indica cuál es la posición más débil y qué ventaja se exige.
+
 ## Splits y dividendos
 
 `corporate.js` revisa en cada ciclo (y cada 10 min en local) los splits y dividendos de los valores en cartera con los datos gratuitos de Yahoo.

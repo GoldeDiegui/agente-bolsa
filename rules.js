@@ -18,6 +18,11 @@ const MAX_BUYS_PER_REVIEW = 3;
 const MIN_CONFIDENCE = 0.5;    // el análisis debe cubrir al menos la mitad del modelo
 const MIN_COVERAGE = Number(process.env.MIN_COVERAGE ?? 0.35); // hasta tener analizado este % del universo no se compara con el sector ni se opera por tesis
 const MIN_HOLD_MS = 24 * 3600e3; // no vende por tesis en las primeras 24 h (evita comprar y vender seguido)
+// Rotación: con la cartera llena, cambia la posición más débil por una candidata claramente mejor
+const ROTATION_GAP = Number(process.env.ROTATION_GAP ?? 12);          // puntos de ventaja mínimos de la candidata
+const ROTATION_MIN_HOLD_MS = 3 * 24 * 3600e3;                         // una posición comprada por rotación no se rota en 3 días
+const MAX_ROTATIONS_PER_DAY = 2;
+const ROTATION_SECTOR_MAX = 35;                                       // la rotación no deja un sector por encima de este % de la cartera
 const ALLOW_MOMENTUM_ONLY = process.env.ALLOW_MOMENTUM_ONLY === '1'; // sin datos fundamentales, operar solo por tendencia
 
 const usd = (n) => n.toLocaleString('es-ES', { style: 'currency', currency: 'USD' });
@@ -30,6 +35,9 @@ function trendPct(symbol) {
 }
 const lastBuyAt = (symbol) => getOrders().find((o) => o.symbol === symbol && o.side === 'buy')?.t ?? 0;
 const worst = worstLine;
+const DAY_MS = 24 * 3600e3;
+const rotationsToday = () => getOrders().filter((o) => o.side === 'sell' && o.reason.startsWith('Rotación') && Date.now() - o.t < DAY_MS).length;
+const lastRotationBuyAt = (symbol) => getOrders().find((o) => o.symbol === symbol && o.side === 'buy' && o.reason.startsWith('Rotación'))?.t ?? 0;
 // Una caída enorme hasta ~1/k del coste (k = 2, 3, 4, 5, 10…) puede ser un split sin ajustar y no una pérdida real
 const suspectSplit = (p) => { const r = p.price / p.avgCost; return r < 0.65 && [2, 3, 4, 5, 6, 8, 10, 15, 20].some((k) => Math.abs(r * k - 1) < 0.15); };
 
@@ -129,6 +137,53 @@ export function autonomousReview() {
     if (ok) { buys++; sectorW[c.sector] = (sectorW[c.sector] ?? 0) + ((shares * c.price) / s.equity) * 100; }
   }
 
+  // 3b) Rotación: sin margen de efectivo, vende la posición más débil si una candidata la supera con claridad
+  let rotationNote = '';
+  const s1 = getSummary();
+  const noRoom = s1.cash - (s1.equity * CASH_FLOOR_PCT) / 100 < s1.equity * 0.02;
+  if (ready && noRoom && rotationsToday() >= MAX_ROTATIONS_PER_DAY) rotationNote = ` Límite de ${MAX_ROTATIONS_PER_DAY} rotaciones en 24 h alcanzado.`;
+  if (ready && noRoom && rotationsToday() < MAX_ROTATIONS_PER_DAY) {
+    const weak = s1.positions
+      .filter((p) => !sold.has(p.symbol) && canTrade(p.symbol) && Date.now() - lastBuyAt(p.symbol) >= MIN_HOLD_MS && Date.now() - lastRotationBuyAt(p.symbol) >= ROTATION_MIN_HOLD_MS)
+      .map((p) => ({ p, a: analyze(p.symbol) }))
+      .filter(({ a }) => a && a.score != null && a.confidence >= MIN_CONFIDENCE)
+      .sort((x, y) => x.a.score - y.a.score);
+    const rotCands = getAllQuotes()
+      .filter((q) => q.symbol !== 'SPY' && q.price != null && Date.now() - q.ts < FRESH_MS && !held[q.symbol] && canTrade(q.symbol) && Math.abs(q.changePct) < 10 && q.changePct > -5)
+      .map((q) => ({ q, a: analyze(q.symbol) }))
+      .filter(({ a }) => a && a.verdict === 'Atractiva' && !a.eventRisk && a.confidence >= MIN_CONFIDENCE)
+      .sort((x, y) => y.a.score - x.a.score);
+    if (weak.length) rotationNote = ` Posición más débil: ${weak[0].p.symbol} ${weak[0].a.score}/100; solo se rota si una candidata la supera en ${ROTATION_GAP}+ puntos.`;
+    let pair = null;
+    outer: for (const c of rotCands) {
+      for (const w of weak) {
+        if (c.a.score - w.a.score < ROTATION_GAP) break; // `weak` va de menor a mayor puntuación: las siguientes tendrían aún menos ventaja
+        const sectorAfter = (sectorW[c.q.sector] ?? 0) - (w.p.sector === c.q.sector ? w.p.weightPct : 0);
+        if (sectorAfter >= ROTATION_SECTOR_MAX) continue;
+        pair = { c, w }; break outer;
+      }
+    }
+    if (pair) {
+      const { c, w } = pair, gap = c.a.score - w.a.score;
+      const sold1 = tryOrder(
+        { symbol: w.p.symbol, side: 'sell', shares: w.p.shares, reason: `Rotación: ${w.p.symbol} puntúa ${w.a.score}/100 y ${c.q.symbol} ${c.a.score}/100 (+${gap}); se libera capital para la mejor candidata (${worst(w.a, 1) || 'puntuación inferior'})` },
+        `Rotación: vendo todo ${w.p.symbol} (${w.a.score}/100, la posición más débil) para comprar ${c.q.symbol} (${c.a.score}/100).`
+      );
+      if (sold1) {
+        sold.add(w.p.symbol);
+        const s2 = getSummary();
+        const room = s2.cash - (s2.equity * CASH_FLOOR_PCT) / 100;
+        const conviction = clamp((c.a.score - 66) / 24, 0, 1);
+        const budget = Math.min((s2.equity * ENTRY_PCT * (0.6 + 0.8 * conviction)) / 100, room);
+        const shares = Math.floor(budget / c.q.price);
+        if (shares >= 1) tryOrder(
+          { symbol: c.q.symbol, side: 'buy', shares, reason: `Rotación desde ${w.p.symbol} (${w.a.score}/100 → ${c.a.score}/100): ${thesisLine(c.a, 3)} · ${c.q.sector}` },
+          `Compro ${shares} de ${c.q.symbol} (${c.q.sector}): tesis ${c.a.score}/100 — ${thesisLine(c.a, 2)}.`
+        );
+      }
+    }
+  }
+
   const s = getSummary();
   let head;
   const open = ENFORCE ? openMarkets() : null;
@@ -137,7 +192,7 @@ export function autonomousReview() {
   else if (ready && s.cash - (s.equity * CASH_FLOOR_PCT) / 100 < s.equity * 0.01) {
     const top = rank({ limit: 8, verdicts: ['Atractiva'], minConfidence: MIN_CONFIDENCE }).filter((a) => !held[a.symbol]).slice(0, 3);
     head = `Sin cambios: el efectivo está en el mínimo (${((s.cash / s.equity) * 100).toFixed(1)} %, colchón del ${CASH_FLOOR_PCT} %) y no hay margen para nuevas compras.` +
-      (top.length ? ` Candidatas en espera: ${top.map((a) => `${a.symbol} ${a.score}/100`).join(', ')}.` : '');
+      (top.length ? ` Candidatas en espera: ${top.map((a) => `${a.symbol} ${a.score}/100`).join(', ')}.` : '') + rotationNote;
   }
   else if (suspectSkips.length) head = `Sin cambios: ${suspectSkips.join(', ')} ha caído de golpe y podría ser un split sin verificar; no se vende por stop-loss hasta confirmar con los datos de eventos.`;
   else if (closedSkips) head = `Sin cambios: ${closedSkips} decisión(es) pendientes de que abra el mercado de ese valor.`;
