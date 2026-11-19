@@ -43,6 +43,7 @@ export function tradeStatus(q, now = Date.now()) {
   const c = q ? marketClock(q.market, now) : null;
   if (!c) return { ok: false, reason: 'Mercado desconocido' };
   if (!c.open) return { ok: false, reason: `Mercado cerrado (${scheduleText(q.market)})` };
+  if (q.source !== 'simulado' && q.marketTime == null && q.ts && now - q.ts > MAX_QUOTE_AGE_MS) return { ok: false, reason: 'El precio guardado es antiguo (sin hora de mercado)' };
   if (q.source !== 'simulado' && q.marketTime != null) {
     if (q.marketTime < c.sessionStart - 60e3) return { ok: false, reason: 'Sin cotización hoy todavía (¿festivo o la sesión acaba de abrir?)' };
     if (now - q.marketTime > MAX_QUOTE_AGE_MS) return { ok: false, reason: 'El precio lleva más de 45 min sin actualizarse (¿suspendido o festivo?)' };

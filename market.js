@@ -17,6 +17,10 @@ const MAX_HISTORY = 600;
 // Precios de arranque aproximados, solo para el modo sin conexión (respaldo simulado)
 const SEEDS = { AAPL: 355, MSFT: 523, NVDA: 164, AMZN: 269, GOOGL: 300, JPM: 344, XOM: 171, JNJ: 284, KO: 68, SPY: 580 };
 
+// Caché de precios en disco: cada ciclo de la nube es un proceso nuevo; sin esto solo tendrían precio los valores de esa pasada.
+const PRICES_FILE = process.env.PRICES_FILE
+  || (process.env.DATA_FILE ? path.join(path.dirname(process.env.DATA_FILE), 'prices.json') : path.join(__dirname, 'data', 'prices.json'));
+
 const prices = new Map();   // symbol -> { native, prev, source, ts }
 const history = new Map();  // symbol -> [{ t, p }]  (p en USD)
 const fx = {};              // 'EUR' -> { rate, ts }
@@ -33,6 +37,31 @@ for (const u of UNIVERSE) {
   history.set(u.symbol, []);
   if (SIMULATE && SEEDS[u.symbol]) prices.set(u.symbol, { native: SEEDS[u.symbol], prev: SEEDS[u.symbol], source: 'simulado', ts: Date.now() });
 }
+
+function loadPrices() {
+  try {
+    if (!fs.existsSync(PRICES_FILE)) return;
+    const d = JSON.parse(fs.readFileSync(PRICES_FILE, 'utf8'));
+    for (const [sym, v] of Object.entries(d.prices ?? {})) {
+      if (!BY_SYMBOL.has(sym) || !Array.isArray(v) || !(v[0] > 0) || v[2] === 'simulado') continue;
+      const [native, prev, source, ts, mt] = v;
+      prices.set(sym, { native, prev: prev > 0 ? prev : native, source, ts, mt: mt ?? ts }); // sin hora de mercado, la de guardado: así nunca parece fresco
+    }
+    for (const [cur, v] of Object.entries(d.fx ?? {})) if (v?.rate > 0) fx[cur] = v;
+    if (Number.isInteger(d.cursor)) cursor = d.cursor;
+  } catch (e) { console.warn(`No se pudo leer ${PRICES_FILE} (${e.message}); se parte sin precios guardados.`); }
+}
+function savePrices() {
+  try {
+    fs.mkdirSync(path.dirname(PRICES_FILE), { recursive: true });
+    const out = { savedAt: Date.now(), cursor, fx, prices: {} };
+    for (const [sym, q] of prices) if (q.source !== 'simulado') out.prices[sym] = [q.native, q.prev, q.source, q.ts, q.mt ?? null];
+    const tmp = PRICES_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(out));
+    fs.renameSync(tmp, PRICES_FILE);
+  } catch (e) { console.warn('No se pudieron guardar los precios:', e.message); }
+}
+loadPrices();
 
 function randn() {
   let u = 0, v = 0;
@@ -117,21 +146,30 @@ async function updateOne(symbol) {
   record(symbol);
 }
 
-async function pool(items, limit, fn) {
+async function pool(items, limit, fn, deadline = Infinity) {
   let i = 0;
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (i < items.length) await fn(items[i++]);
+    while (i < items.length && Date.now() < deadline) await fn(items[i++]);
   }));
+  return i; // cuántos se llegaron a pedir
 }
 
 // priority: símbolos que se deben refrescar siempre (los que tienes en cartera)
-export async function refreshPrices(priority = []) {
+// opts.batch: cuántos valores "de fondo" refrescar (Infinity = todo el universo) · opts.budgetMs: tiempo máximo de la pasada.
+// Los de cartera/candidatos van primero, así que si se agota el tiempo lo que queda sin refrescar es lo menos importante.
+export async function refreshPrices(priority = [], opts = {}) {
   await refreshFx();
   const must = new Set(['SPY', ...priority.filter((s) => BY_SYMBOL.has(s))]);
   const rest = UNIVERSE.map((u) => u.symbol).filter((s) => !must.has(s));
+  const size = Math.min(rest.length, opts.batch ?? BATCH);
   const batch = [];
-  for (let n = 0; n < BATCH && rest.length; n++) batch.push(rest[cursor++ % rest.length]);
-  await pool([...must, ...batch], CONCURRENCY, updateOne);
+  for (let n = 0; n < size; n++) batch.push(rest[cursor++ % rest.length]);
+  const deadline = opts.budgetMs ? Date.now() + opts.budgetMs : Infinity;
+  const items = [...must, ...batch];
+  const done = await pool(items, CONCURRENCY, updateOne, deadline);
+  cursor -= Math.min(batch.length, items.length - done); // lo no pedido se retoma en el siguiente ciclo
+  savePrices();
+  return { requested: done, total: items.length };
 }
 
 export function getQuote(symbol) {

@@ -110,3 +110,11 @@ La *guidance* oficial de las empresas (lo que la directiva prevé ingresar o gan
 - La cartera, el historial y las decisiones se guardan en `data/state.json` y se recuperan al arrancar. Para empezar de cero, para el servidor y borra ese fichero (o usa el botón *Reiniciar cartera*). Se puede cambiar la ruta con `DATA_FILE`.
 - Es una simulación educativa, no asesoramiento financiero. Yahoo Finance no es una API oficial y puede cambiar o limitar el acceso.
 - Siguientes pasos útiles: backtesting del modelo, órdenes stop, autenticación y SQLite.
+
+## Precios de todo el universo en la web (nube)
+
+Cada ciclo de GitHub Actions es un proceso nuevo, así que los precios se guardan en `data/prices.json` (rama `estado`, junto a la cartera).
+- Ciclo de datos (cada 3 h): refresca los 542 valores (tope de 200 s).
+- Ciclo de operar (cada 5 min): cartera, órdenes pendientes y candidatos primero, más un lote de 120 valores de fondo (`PRICE_BATCH_TRADE`); el resto conserva su último precio.
+- Un precio guardado nunca se usa para operar si lleva más de 45 min sin actualizarse (los de cartera y candidatos se refrescan en cada ciclo).
+- La web publica además `analyses.json` con el análisis de todos los valores; se descarga solo al abrir un valor que no esté en `state.json`.

@@ -42,8 +42,10 @@ try {
   log(`Datos: ${n} descargas · análisis ${cov.analyzed}/${cov.total}`);
   // 2) Precios de lo que tengo, de las órdenes pendientes y de los candidatos
   // (fuera de horario también: sirve para valorar la cartera al último cierre en la web)
-  await refreshPrices([...getWatchedSymbols(), ...worklist.getShortlist()]);
-  log(`Precios: ${marketStats().real} reales`);
+  // En el ciclo de datos se refresca todo el universo; en el de operar, un lote grande (la caché en disco conserva el resto)
+  const pr = await refreshPrices([...getWatchedSymbols(), ...worklist.getShortlist()],
+    mode === 'trade' ? { batch: Number(process.env.PRICE_BATCH_TRADE || 120), budgetMs: 100000 } : { batch: Infinity, budgetMs: 200000 });
+  log(`Precios: ${pr.requested}/${pr.total} pedidos · ${marketStats().loaded}/${marketStats().total} con precio`);
 
   // 3) Splits y dividendos de lo que tengo (antes de decidir nada, para que los precios y las acciones cuadren)
   {
@@ -98,6 +100,14 @@ function exportSite() {
     const a = analyze(sym);
     if (a) analyses[sym] = { ...a, headlines: (a.headlines ?? []).slice(0, 4).map((h) => ({ headline: h.headline, source: h.source })) };
   }
+  // Análisis de TODOS los valores en un fichero aparte (la web lo descarga solo al abrir un valor que no esté en state.json)
+  const all = {};
+  for (const u of UNIVERSE) {
+    const a = analyze(u.symbol);
+    if (a) all[u.symbol] = { ...a, headlines: (a.headlines ?? []).slice(0, 3).map((h) => ({ headline: h.headline, source: h.source })) };
+  }
+  fs.mkdirSync(SITE_DIR, { recursive: true });
+  fs.writeFileSync(path.join(SITE_DIR, 'analyses.json'), JSON.stringify({ updatedAt: Date.now(), analyses: all }));
   const curve = getEquityCurve();
   const step = Math.max(1, Math.ceil(curve.length / 700));
   const now = Date.now();
