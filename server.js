@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { refreshPrices, getAllQuotes, getHistory, marketStats } from './market.js';
 import { getSummary, snapshot, getOrders, getEquityCurve, getRisk, placeOrder, addAgentLog, getAgentLog, flushState, resetPortfolio, getWatchedSymbols, addLimitOrder, cancelLimitOrder, getPending, checkPending, getEvents } from './portfolio.js';
 import { chat, autonomousReview, agentEnabled, agentMode } from './agent.js';
-import { startFundamentals, flushFundamentals, fundamentalsStats } from './fundamentals.js';
+import { startFundamentals, flushFundamentals, fundamentalsStats, ensureStatements, STMT_FIELDS } from './fundamentals.js';
 import { checkCorporateEvents } from './corporate.js';
 import { maybeSnapshot, evaluate, summary as scoreSummary } from './scorecard.js';
 import { analyze, analysisText, brief, rank, shortlist, analysisCoverage } from './analysis.js';
@@ -50,6 +50,16 @@ app.get('/api/analysis/:symbol', (req, res) => {
   const a = analyze(req.params.symbol.toUpperCase());
   if (!a) return res.status(404).json({ error: 'Valor desconocido' });
   res.json({ ...a, text: analysisText(a) });
+});
+app.get('/api/financials/:symbol', async (req, res) => {
+  const sym = req.params.symbol.toUpperCase();
+  try {
+    const e = await ensureStatements(sym);
+    if (!e) return res.status(404).json({ error: 'Todavía no hay cuentas de este valor' });
+    const keys = Object.keys(STMT_FIELDS);
+    const row = (d, o) => [d, ...keys.map((k) => o[k] ?? null)];
+    res.json({ fields: keys, data: { [sym]: { c: e.currency, t: e.fetchedAt, q: Object.entries(e.q ?? {}).map(([d, o]) => row(d, o)), a: Object.entries(e.a ?? {}).map(([d, o]) => row(d, o)) } } });
+  } catch (err) { res.status(502).json({ error: err.message }); }
 });
 app.get('/api/opportunities', (req, res) => {
   const verdicts = req.query.verdict ? [String(req.query.verdict)] : ['Atractiva'];

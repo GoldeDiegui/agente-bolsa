@@ -8,7 +8,7 @@ import { refreshPrices, getAllQuotes, marketStats, UNIVERSE } from './market.js'
 import { getSummary, snapshot, getOrders, getEquityCurve, getRisk, getPending, checkPending, getWatchedSymbols, addAgentLog, getAgentLog, getEvents, flushState } from './portfolio.js';
 import { checkCorporateEvents } from './corporate.js';
 import { maybeSnapshot, evaluate, summary as scoreSummary } from './scorecard.js';
-import { runFundamentalsBudget, flushFundamentals, fundamentalsStats, hasFinnhub } from './fundamentals.js';
+import { runFundamentalsBudget, flushFundamentals, fundamentalsStats, hasFinnhub, exportStatements } from './fundamentals.js';
 import { analyze, brief, rank, shortlist, analysisCoverage } from './analysis.js';
 import { autonomousReview, agentEnabled, agentMode } from './agent.js';
 import { MARKETS, marketClock, openMarkets, scheduleText, ENFORCE } from './hours.js';
@@ -108,6 +108,7 @@ function exportSite() {
   }
   fs.mkdirSync(SITE_DIR, { recursive: true });
   fs.writeFileSync(path.join(SITE_DIR, 'analyses.json'), JSON.stringify({ updatedAt: Date.now(), analyses: all }));
+  fs.writeFileSync(path.join(SITE_DIR, 'financials.json'), JSON.stringify(exportStatements()));
   const curve = getEquityCurve();
   const step = Math.max(1, Math.ceil(curve.length / 700));
   const now = Date.now();

@@ -118,3 +118,11 @@ Cada ciclo de GitHub Actions es un proceso nuevo, así que los precios se guarda
 - Ciclo de operar (cada 5 min): cartera, órdenes pendientes y candidatos primero, más un lote de 120 valores de fondo (`PRICE_BATCH_TRADE`); el resto conserva su último precio.
 - Un precio guardado nunca se usa para operar si lleva más de 45 min sin actualizarse (los de cartera y candidatos se refrescan en cada ciclo).
 - La web publica además `analyses.json` con el análisis de todos los valores; se descarga solo al abrir un valor que no esté en `state.json`.
+
+## Cuentas de la empresa (ingresos, gastos, balance)
+
+En el detalle de cada valor aparece la tabla «Cuentas»: resultados (ingresos, costes, gastos, beneficio bruto/operativo/neto, EBITDA, BPA), balance (activos, pasivos, patrimonio, efectivo, deuda) y flujo de caja, con tres vistas:
+- **Trimestral · interanual:** cada trimestre frente al mismo trimestre del año anterior.
+- **Trimestral · secuencial:** frente al trimestre anterior.
+- **Anual:** frente al año anterior.
+Los costes, pasivos y deuda se marcan en rojo al subir. Fuente: Yahoo Finance (S&P 500 e IBEX), sin registro; se descargan poco a poco (primero cartera y candidatos) y se renuevan cada 5 días (`YAHOO_STMT_PER_MIN`, 40 por defecto). Yahoo suele dar unos 4-5 trimestres y 4 años. En la nube se publican en `financials.json`; en local, el servidor los pide al abrir el valor (`/api/financials/:símbolo`).

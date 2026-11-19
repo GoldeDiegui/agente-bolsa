@@ -16,12 +16,13 @@ const FUND_TTL = 24 * HOUR;   // los fundamentales cambian despacio: una vez al 
 const NEWS_TTL = 3 * HOUR;    // noticias de lo que tienes en cartera o estás vigilando
 const RETRY_TTL = 6 * HOUR;   // tras un fallo, no se insiste hasta pasadas 6 h
 const CAL_TTL = 12 * HOUR;
+const STMT_TTL = 5 * 24 * HOUR; // cuentas (ingresos, balance…): cambian solo al publicar resultados
 const EST_TTL = 24 * HOUR;    // revisiones de estimaciones de analistas: una vez al día
 
 const BY = new Map(UNIVERSE.map((u) => [u.symbol, u]));
 export const hasFinnhub = () => Boolean(FINNHUB_KEY);
 
-const cache = { fundamentals: {}, news: {}, estimates: {}, calendar: { fetchedAt: 0, dates: {} } };
+const cache = { fundamentals: {}, news: {}, estimates: {}, statements: {}, calendar: { fetchedAt: 0, dates: {} } };
 const status = { errors: {}, paused: { finnhub: 0, yahoo: 0 } };
 
 // ---------- caché en disco ----------
@@ -32,6 +33,7 @@ function load() {
     cache.fundamentals = s.fundamentals ?? {};
     cache.news = s.news ?? {};
     cache.estimates = s.estimates ?? {};
+    cache.statements = s.statements ?? {};
     cache.calendar = s.calendar ?? { fetchedAt: 0, dates: {} };
     console.log(`Datos fundamentales recuperados (${Object.keys(cache.fundamentals).length} valores)`);
   } catch (e) {
@@ -66,6 +68,7 @@ function makeLimiter(perMin) {
 const limiters = {
   finnhub: makeLimiter(Number(process.env.FINNHUB_PER_MIN || 50)), // el plan gratuito permite unas 60/min
   yahoo: makeLimiter(Number(process.env.YAHOO_FUND_PER_MIN || 15)),
+  yahooStmt: makeLimiter(Number(process.env.YAHOO_STMT_PER_MIN || 40)),
 };
 
 async function http(url, { headers = {}, timeout = 8000, as = 'json' } = {}) {
@@ -80,10 +83,10 @@ async function http(url, { headers = {}, timeout = 8000, as = 'json' } = {}) {
 }
 
 async function viaProvider(name, fn) {
-  if (Date.now() < status.paused[name]) { const e = new Error('proveedor en pausa'); e.paused = true; throw e; }
+  if (Date.now() < status.paused[name === 'yahooStmt' ? 'yahoo' : name]) { const e = new Error('proveedor en pausa'); e.paused = true; throw e; }
   await limiters[name]();
   try { return await fn(); }
-  catch (e) { if (e.status === 429) status.paused[name] = Date.now() + 60000; throw e; }
+  catch (e) { if (e.status === 429) status.paused[name === 'yahooStmt' ? 'yahoo' : name] = Date.now() + 60000; throw e; }
 }
 
 function noteError(kind, symbol, err) {
@@ -300,6 +303,89 @@ async function fetchYahooNews(symbol) {
   });
 }
 
+
+// ---------- Cuentas: ingresos, gastos, beneficio, balance y flujos de caja (Yahoo, trimestral y anual) ----------
+// Campo -> tipo de Yahoo (sin prefijo annual/quarterly)
+export const STMT_FIELDS = {
+  rev: 'TotalRevenue', cogs: 'CostOfRevenue', gp: 'GrossProfit', opex: 'OperatingExpense', totexp: 'TotalExpenses',
+  opinc: 'OperatingIncome', ebitda: 'EBITDA', ni: 'NetIncome', eps: 'DilutedEPS',
+  ocf: 'OperatingCashFlow', fcf: 'FreeCashFlow',
+  assets: 'TotalAssets', liab: 'TotalLiabilitiesNetMinorityInterest', eq: 'StockholdersEquity', cash: 'CashAndCashEquivalents', debt: 'TotalDebt',
+};
+const STMT_KEYS = Object.keys(STMT_FIELDS);
+const KEEP = { q: 8, a: 5 }; // periodos que se guardan
+
+export function normalizeYahooStatements(result = []) {
+  const byType = new Map();
+  for (const r of result) { const t = r?.meta?.type?.[0]; if (t && Array.isArray(r[t])) byType.set(t, r[t]); }
+  const out = { currency: null, q: {}, a: {} };
+  for (const [kind, prefix] of [['q', 'quarterly'], ['a', 'annual']]) {
+    for (const k of STMT_KEYS) {
+      for (const it of byType.get(prefix + STMT_FIELDS[k]) ?? []) {
+        const v = num(it?.reportedValue?.raw);
+        if (v == null || !it.asOfDate) continue;
+        (out[kind][it.asOfDate] ??= {})[k] = v;
+        out.currency ??= it.currencyCode ?? null;
+      }
+    }
+    const dates = Object.keys(out[kind]).sort().reverse().slice(0, KEEP[kind]);
+    out[kind] = Object.fromEntries(dates.map((d) => [d, out[kind][d]]));
+  }
+  return Object.keys(out.q).length || Object.keys(out.a).length ? out : null;
+}
+
+async function fetchYahooStatements(symbol) {
+  return viaProvider('yahooStmt', async () => {
+    const types = STMT_KEYS.flatMap((k) => [`annual${STMT_FIELDS[k]}`, `quarterly${STMT_FIELDS[k]}`]).join(',');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let crumbQ = '', headers = {};
+      try { const { cookie, crumb } = await yahooAuth(); crumbQ = `&crumb=${encodeURIComponent(crumb)}`; headers = { Cookie: cookie }; } catch { /* a veces funciona sin crumb */ }
+      const url = `https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/${encodeURIComponent(symbol)}?type=${types}&merge=false&padTimeSeries=false&period1=${Math.floor(Date.now() / 1000 - 6 * 365 * 86400)}&period2=${Math.floor(Date.now() / 1000 + 86400)}${crumbQ}`;
+      try {
+        const data = await http(url, { headers, timeout: 12000 });
+        const st = normalizeYahooStatements(data?.timeseries?.result);
+        if (!st) throw new Error('Yahoo no tiene cuentas de este valor');
+        return { fetchedAt: Date.now(), ...st };
+      } catch (e) {
+        if ((e.status === 401 || e.status === 403) && attempt === 0) { yAuth = null; continue; }
+        throw e;
+      }
+    }
+  });
+}
+const needsStmt = (s, now) => {
+  if (status.paused.yahoo > now) return false;
+  const e = cache.statements[s];
+  return !e || now - (e.failedAt ?? e.fetchedAt) > (e.failedAt ? RETRY_TTL : STMT_TTL);
+};
+async function refreshStatements(s) {
+  const prev = cache.statements[s];
+  try { cache.statements[s] = await fetchYahooStatements(s); }
+  catch (e) {
+    if (e.paused || e.status === 429) return;
+    cache.statements[s] = { ...(prev?.fetchedAt ? prev : {}), failedAt: Date.now() };
+    noteError('cuentas', s, e);
+  }
+  markDirty();
+}
+export const getStatements = (symbol) => { const e = cache.statements[symbol]; return e?.fetchedAt ? e : null; };
+// Para el servidor local: si aún no hay cuentas de este valor, se piden en el momento
+export async function ensureStatements(symbol) {
+  if (!BY.has(symbol)) return null;
+  if (!getStatements(symbol) && needsStmt(symbol, Date.now())) await refreshStatements(symbol);
+  return getStatements(symbol);
+}
+// Formato compacto para la web de solo lectura: { fields, data: { SIMBOLO: { c, q: [[fecha, ...valores]], a: [...] } } }
+export function exportStatements() {
+  const row = (d, o) => [d, ...STMT_KEYS.map((k) => (o[k] == null ? null : o[k]))];
+  const data = {};
+  for (const [sym, e] of Object.entries(cache.statements)) {
+    if (!e?.fetchedAt || !BY.has(sym)) continue;
+    data[sym] = { c: e.currency, t: e.fetchedAt, q: Object.entries(e.q ?? {}).map(([d, o]) => row(d, o)), a: Object.entries(e.a ?? {}).map(([d, o]) => row(d, o)) };
+  }
+  return { fields: STMT_KEYS, data };
+}
+
 // ---------- API pública ----------
 export const providerFor = (symbol) => (BY.get(symbol)?.market === 'S&P 500' && FINNHUB_KEY ? 'finnhub' : 'yahoo');
 export const getFundamentals = (symbol) => { const e = cache.fundamentals[symbol]; return e?.m ? e : null; };
@@ -318,6 +404,7 @@ export function fundamentalsStats() {
   const analyzed = UNIVERSE.filter((u) => u.symbol !== 'SPY' && getFundamentals(u.symbol)).length;
   return {
     analyzed,
+    statements: Object.values(cache.statements).filter((e) => e?.fetchedAt).length,
     total: UNIVERSE.filter((u) => u.symbol !== 'SPY').length,
     finnhub: hasFinnhub(),
     errors: status.errors,
@@ -395,7 +482,7 @@ async function refreshNews(s) {
 // Devuelve una función "trabajo()" que hace UNA descarga pendiente (por prioridad) y dice si hizo algo.
 function makeWorker({ getWatched = () => [], getShortlist = () => [] } = {}) {
   const symbols = UNIVERSE.map((u) => u.symbol).filter((s) => s !== 'SPY');
-  let cursor = 0;
+  let cursor = 0, stmtCursor = 0;
   return async function work() {
     const now = Date.now();
     try {
@@ -407,9 +494,16 @@ function makeWorker({ getWatched = () => [], getShortlist = () => [] } = {}) {
       if (n) { await refreshNews(n); return true; }
       const est = [...new Set([...watched, ...getShortlist()])].find((s) => BY.has(s) && needsEst(s, now));
       if (est) { await refreshEstimates(est); return true; }
+      // Cuentas de lo que tienes y de los candidatos: antes que el resto del universo
+      const st = [...new Set([...watched, ...getShortlist()])].find((s) => BY.has(s) && needsStmt(s, now));
+      if (st) { await refreshStatements(st); return true; }
       for (let i = 0; i < symbols.length; i++) {
         const s = symbols[(cursor + i) % symbols.length];
         if (needsFund(s, now)) { cursor = (cursor + i + 1) % symbols.length; await refreshFund(s); return true; }
+      }
+      for (let i = 0; i < symbols.length; i++) {
+        const s = symbols[(stmtCursor + i) % symbols.length];
+        if (needsStmt(s, now)) { stmtCursor = (stmtCursor + i + 1) % symbols.length; await refreshStatements(s); return true; }
       }
     } catch (e) {
       noteError('planificador', null, e);
