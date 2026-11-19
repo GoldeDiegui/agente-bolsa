@@ -237,11 +237,19 @@ async function loadOpps() {
 for (const id of ['opVerdict', 'opMarket', 'opSort']) document.addEventListener('DOMContentLoaded', () => $(id).addEventListener('change', loadOpps));
 
 const NAMES = { valuation:'Valoración', growth:'Crecimiento', quality:'Calidad', analysts:'Analistas', earnings:'Resultados', revisions:'Revisiones', sentiment:'Noticias' };
+let ALL_AN = null; // análisis de todo el universo (se descarga solo cuando hace falta)
 async function openDetail(symbol) {
   $('sheet').innerHTML = '<div style="color:var(--mut)">Cargando análisis…</div>'; $('modal').classList.add('open');
   try {
     let a;
-    if (STATIC) { a = STATE?.analyses?.[symbol]; if (!a) throw new Error('Esta web solo publica el detalle de tus posiciones y de las oportunidades listadas.'); }
+    if (STATIC) {
+      a = STATE?.analyses?.[symbol];
+      if (!a) {
+        ALL_AN ??= fetch(stateUrl().replace('state.json', 'analyses.json')).then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).catch((e) => { ALL_AN = null; throw e; });
+        a = (await ALL_AN)?.analyses?.[symbol];
+        if (!a) throw new Error('Todavía no hay análisis publicado de este valor (se actualiza en el próximo ciclo).');
+      }
+    }
     else { const r = await fetch('/api/analysis/' + encodeURIComponent(symbol)); a = await r.json(); if (!r.ok) throw new Error(a.error); }
     const bars = Object.entries(NAMES).map(([k, n]) => { const v = a.scores?.[k]; return `<span>${n}</span><div class="bar"><i style="width:${v ?? 0}%;${v == null ? 'opacity:.2' : ''}"></i></div><b>${v ?? '–'}</b>`; }).join('');
     const rs = (t) => a.reasons.filter(x => x.type === t).map(x => `<li class="${t}">${esc(x.text)}</li>`).join('');
