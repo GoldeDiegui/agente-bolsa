@@ -85,6 +85,11 @@
 <div class="banner" id="banner" style="display:none"></div>
 
 <main>
+  <section class="card c12" id="dailyCard" style="display:none">
+    <h2>Resumen del día <span id="dailyDay" style="text-transform:none;letter-spacing:0"></span></h2>
+    <div id="daily"></div>
+  </section>
+
   <section class="card c8">
     <h2>Evolución del patrimonio vs S&amp;P 500</h2>
     <div class="chartbox"><canvas id="eqChart"></canvas></div>
@@ -301,6 +306,26 @@ async function loadFin(sym) {
   } catch { if ($('fin')) $('fin').innerHTML = '<h4>Cuentas</h4><p style="color:var(--mut);font-size:12px">No se pudieron cargar las cuentas ahora mismo.</p>'; }
 }
 
+
+// ---------- Resumen del día ----------
+function renderDaily(d) {
+  const card = $('dailyCard');
+  if (!d) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  $('dailyDay').textContent = '· ' + d.label;
+  const kp = (label, v, cl) => `<div style="min-width:120px"><div style="color:var(--mut);font-size:11px">${label}</div><b class="${cl ?? ''}" style="font-size:18px">${v}</b></div>`;
+  const ops = d.orders.map(o => `<tr><td class="${o.side === 'buy' ? 'up' : 'down'}">${o.side === 'buy' ? 'COMPRA' : 'VENTA'}</td><td><b class="sym" data-sym="${esc(o.symbol)}">${esc(o.symbol)}</b></td><td class="r">${o.shares} × ${usd(o.price)}</td><td style="color:var(--mut)">${esc(o.reason)}</td></tr>`).join('');
+  const evs = d.events.map(e => `<tr><td style="color:var(--acc)">${e.type === 'split' ? 'SPLIT' : 'DIVIDENDO'}</td><td><b class="sym" data-sym="${esc(e.symbol)}">${esc(e.symbol)}</b></td><td class="r">${e.total ? usd(e.total) : ''}</td><td style="color:var(--mut)">${esc(e.text)}</td></tr>`).join('');
+  $('daily').innerHTML = `<p style="margin:0 0 10px">${esc(d.text)}</p>` +
+    `<div style="display:flex;flex-wrap:wrap;gap:8px 24px;margin-bottom:8px">` +
+      kp('Hoy', pct(d.retPct), cls(d.retPct)) + kp('S&P 500 hoy', pct(d.spyPct), cls(d.spyPct)) + kp('Resultado del día', (d.pnl > 0 ? '+' : '') + usd(d.pnl), cls(d.pnl)) +
+      kp('Desde el inicio', pct(d.sinceStartPct), cls(d.sinceStartPct)) + kp('S&P 500 desde el inicio', pct(d.spySinceStartPct), cls(d.spySinceStartPct)) + kp('Efectivo', d.cashPct + ' %') +
+    `</div>` +
+    ((ops || evs) ? `<table style="width:100%;font-size:12px">${ops}${evs}</table>` : '') +
+    (d.lastDecision ? `<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--mut);font-size:12px">Última decisión del gestor</summary><p style="font-size:12px;margin:6px 0 0">${esc(d.lastDecision)}</p></details>` : '');
+}
+async function loadDaily() { try { renderDaily(await (await fetch('/api/daily')).json()); } catch { /* se reintenta */ } }
+
 let ALL_AN = null; // análisis de todo el universo (se descarga solo cuando hace falta)
 async function openDetail(symbol) {
   $('sheet').innerHTML = '<div style="color:var(--mut)">Cargando análisis…</div>'; $('modal').classList.add('open');
@@ -477,7 +502,7 @@ async function loadStatic() {
     eqChart.data.labels = []; eqChart.data.datasets.forEach(d => d.data = []);
     s.curve.forEach(addPoint); eqChart.update();
     renderPortfolio(s.portfolio); renderRisk(s.risk, s.portfolio); renderMarket(s.quotes, s.market);
-    renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); renderScore(s.scorecard); renderBanner(s);
+    renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); renderScore(s.scorecard); renderBanner(s); renderDaily(s.daily);
     $('live').textContent = '● publicado ' + ago(s.updatedAt); $('live').className = (Date.now() - s.updatedAt < 3 * 3600e3 ? 'up' : 'down');
   };
   await refresh();
@@ -490,7 +515,7 @@ async function load() {
   initCharts();
   s.curve.forEach(addPoint); eqChart.update();
   renderPortfolio(s.portfolio); renderRisk(s.risk, s.portfolio); renderMarket(s.quotes, s.market);
-  renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); setInterval(loadOpps, 30000); loadScore(); setInterval(loadScore, 600000);
+  renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); setInterval(loadOpps, 30000); loadDaily(); setInterval(loadDaily, 60000); loadScore(); setInterval(loadScore, 600000);
   if (s.agentMode === 'reglas') addMsg('Modo gratuito: soy un gestor basado en reglas (stop-loss -8%, toma de beneficios +15%, máx. 25% por valor, 15% de efectivo mínimo). Decido con análisis fundamental (valoración frente al sector, crecimiento, calidad, analistas, resultados y noticias). Prueba "oportunidades", "analiza apple", "¿está cara nvidia?", "por qué compraste X", "revisa la cartera" o "estado de los datos". Revisión automática cada 5 minutos.', 'a');
 
   const es = new EventSource('/api/stream');
