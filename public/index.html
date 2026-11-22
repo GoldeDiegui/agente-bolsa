@@ -69,6 +69,7 @@
   .banner { margin:0; padding:8px 20px; background:rgba(77,163,255,.12); border-bottom:1px solid var(--line); font-size:12px; color:var(--txt); }
   .banner b { font-weight:600; }
   .mk { display:inline-block; margin-left:10px; } .mk i { font-style:normal; font-weight:600; }
+  button.sec.on { background:var(--acc); color:#fff; border-color:var(--acc); }
   .static .live-only { display:none !important; }
 </style>
 </head>
@@ -200,7 +201,7 @@ function renderCoverage(c) {
   $('anInfo').textContent = `· ${c.analyzed} de ${c.total} valores con datos fundamentales` + (c.analyzed < c.total ? ' (se siguen descargando en segundo plano)' : '');
 }
 const HNAME = { 5: '5 sesiones (≈1 semana)', 20: '20 sesiones (≈1 mes)', 60: '60 sesiones (≈3 meses)' };
-const CNAME = { score: 'Puntuación total', valuation: 'Valoración', growth: 'Crecimiento', quality: 'Calidad', analysts: 'Analistas', earnings: 'Resultados', revisions: 'Revisiones de estimaciones', sentiment: 'Noticias' };
+const CNAME = { score: 'Puntuación total', valuation: 'Valoración', growth: 'Crecimiento', quality: 'Calidad', analysts: 'Analistas', earnings: 'Resultados', revisions: 'Revisiones de estimaciones', momentum: 'Momentum', sentiment: 'Noticias' };
 const sg = (x, d = 2) => (x == null ? '–' : (x > 0 ? '+' : '') + x.toFixed(d));
 function renderScore(sc) {
   if (!sc) return;
@@ -241,7 +242,7 @@ async function loadOpps() {
 }
 for (const id of ['opVerdict', 'opMarket', 'opSort']) document.addEventListener('DOMContentLoaded', () => $(id).addEventListener('change', loadOpps));
 
-const NAMES = { valuation:'Valoración', growth:'Crecimiento', quality:'Calidad', analysts:'Analistas', earnings:'Resultados', revisions:'Revisiones', sentiment:'Noticias' };
+const NAMES = { valuation:'Valoración', growth:'Crecimiento', quality:'Calidad', analysts:'Analistas', earnings:'Resultados', revisions:'Revisiones', momentum:'Momentum', sentiment:'Noticias' };
 
 // ---------- Cuentas de la empresa (ingresos, gastos, balance) ----------
 let FIN_ALL = null, FIN_P = null, finMode = 'qy'; // FIN_ALL: datos; FIN_P: la descarga en curso
@@ -326,6 +327,40 @@ function renderDaily(d) {
 }
 async function loadDaily() { try { renderDaily(await (await fetch('/api/daily')).json()); } catch { /* se reintenta */ } }
 
+
+// ---------- Gráfico de precios (último año de cierres, medias de 50 y 200 sesiones, tus compras y ventas) ----------
+let CH_ALL = null, CH_P = null, pChart = null, chRange = 126;
+const sma = (c, k) => c.map((_, i) => (i + 1 < k ? null : +(c.slice(i + 1 - k, i + 1).reduce((a, b) => a + b, 0) / k).toFixed(2)));
+function drawPrice(sym, series) {
+  const box = $('pbox'); if (!box) return;
+  if (!series?.c?.length) { box.innerHTML = '<p style="color:var(--mut);font-size:12px">Todavía no hay histórico de precios de este valor (se descarga poco a poco).</p>'; return; }
+  const n = Math.min(chRange, series.c.length), from = series.c.length - n;
+  const s50 = sma(series.c, 50).slice(from), s200 = sma(series.c, 200).slice(from);
+  const days = series.d.slice(from), closes = series.c.slice(from);
+  const labels = days.map(d => new Date(d * 864e5).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: '2-digit', timeZone: 'UTC' }));
+  const mark = (side) => { const a = new Array(n).fill(null); for (const o of lastOrders) { if (o.symbol !== sym || o.side !== side) continue; const day = Math.floor(o.t / 864e5); let k = -1; for (let i = 0; i < n; i++) if (days[i] <= day) k = i; if (k >= 0 && day - days[k] <= 5) a[k] = closes[k]; } return a; };
+  if (pChart) { pChart.destroy(); pChart = null; }
+  pChart = new Chart($('pcanvas'), { type: 'line', data: { labels, datasets: [
+    { label: 'Precio', data: closes, borderColor: '#4da3ff', borderWidth: 1.6, pointRadius: 0, tension: 0.1 },
+    { label: 'Media 50', data: s50, borderColor: '#f5a524', borderWidth: 1, pointRadius: 0, borderDash: [4, 3] },
+    { label: 'Media 200', data: s200, borderColor: '#9b59b6', borderWidth: 1, pointRadius: 0, borderDash: [4, 3] },
+    { label: 'Compra', data: mark('buy'), showLine: false, pointStyle: 'triangle', pointRadius: 7, backgroundColor: '#1a9d5b', borderColor: '#1a9d5b' },
+    { label: 'Venta', data: mark('sell'), showLine: false, pointStyle: 'triangle', rotation: 180, pointRadius: 7, backgroundColor: '#d64545', borderColor: '#d64545' },
+  ] }, options: { responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { labels: { boxWidth: 10, font: { size: 11 } } } }, scales: { x: { ticks: { maxTicksLimit: 6, font: { size: 10 } } }, y: { ticks: { font: { size: 10 } } } } } });
+}
+async function loadPrice(sym) {
+  try {
+    let series;
+    if (STATIC) {
+      CH_P ??= fetch(stateUrl().replace('state.json', 'charts.json')).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).catch(e => { CH_P = null; throw e; });
+      CH_ALL = await CH_P; series = CH_ALL.charts?.[sym];
+    } else { const r = await fetch('/api/chart/' + encodeURIComponent(sym)); series = r.ok ? await r.json() : null; }
+    if (!$('pbox')) return;
+    drawPrice(sym, series);
+    document.querySelectorAll('#prange button').forEach(b => { b.onclick = () => { chRange = Number(b.dataset.n); drawPrice(sym, series); document.querySelectorAll('#prange button').forEach(x => x.classList.toggle('on', x === b)); }; });
+  } catch { if ($('pbox')) $('pbox').innerHTML = '<p style="color:var(--mut);font-size:12px">No se pudo cargar el gráfico ahora mismo.</p>'; }
+}
+
 let ALL_AN = null; // análisis de todo el universo (se descarga solo cuando hace falta)
 async function openDetail(symbol) {
   $('sheet').innerHTML = '<div style="color:var(--mut)">Cargando análisis…</div>'; $('modal').classList.add('open');
@@ -349,12 +384,13 @@ async function openDetail(symbol) {
       (rs('pos') ? `<h4>A favor</h4><ul class="rs">${rs('pos')}</ul>` : '') +
       (rs('neg') ? `<h4>En contra</h4><ul class="rs">${rs('neg')}</ul>` : '') +
       (rs('info') ? `<h4>Otros datos</h4><ul class="rs">${rs('info')}</ul>` : '') +
+      `<h4>Precio · último año <span id="prange" style="text-transform:none;letter-spacing:0;margin-left:8px">${[[63,'3M'],[126,'6M'],[260,'1A']].map(([n,l]) => `<button class="sec${n === chRange ? ' on' : ''}" data-n="${n}" style="padding:1px 8px;font-size:11px">${l}</button>`).join(' ')}</span></h4><div id="pbox" class="chartbox" style="height:200px"><canvas id="pcanvas"></canvas></div>` +
       '<div id="fin"><h4>Cuentas</h4><p style="color:var(--mut);font-size:12px">Cargando…</p></div>' +
       (a.catalysts?.length ? `<h4>Catalizadores y eventos</h4><ul class="rs">${a.catalysts.map(c => `<li class="info">${esc(c.text)}</li>`).join('')}</ul>` : '') +
       (a.headlines?.length ? `<h4>Titulares recientes</h4><ul class="rs">${a.headlines.map(h => `<li class="info">${esc(h.headline)} <small style="color:var(--mut)">${esc(h.source ?? '')}</small></li>`).join('')}</ul>` : '') +
       `<p style="color:var(--mut);font-size:11px;margin-top:14px">Modelo orientativo basado en reglas y datos públicos (medianas del sector calculadas con el propio universo). No predice el futuro ni es asesoramiento financiero.</p>`;
     $('xbtn').onclick = closeDetail;
-    loadFin(symbol);
+    loadFin(symbol); loadPrice(symbol);
   } catch (e) { $('sheet').innerHTML = `<button class="sec xbtn" id="xbtn">Cerrar</button><p class="down">No se pudo cargar el análisis: ${esc(e.message)}</p>`; $('xbtn').onclick = closeDetail; }
 }
 const closeDetail = () => $('modal').classList.remove('open');
