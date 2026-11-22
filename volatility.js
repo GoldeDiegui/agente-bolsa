@@ -135,7 +135,7 @@ export function sizeFactor(symbol) {
 
 export const regimeFor = (market) => { const r = cache.regime[market]; return r?.state ? r : null; };
 const REGIME_TEXT = { alcista: 'por encima de sus medias de 50 y 200 sesiones', cautela: 'por debajo de su media de 50 sesiones (aún sobre la de 200)', bajista: 'por debajo de su media de 200 sesiones' };
-export const regimeText = (market) => { const r = regimeFor(market); return r ? `${market} ${REGIME_TEXT[r.state]} (${r.vs200Pct > 0 ? '+' : ''}${r.vs200Pct} % frente a su media de 200)` : null; };
+export const regimeText = (market) => { const r = regimeFor(market); return r ? `${market} ${REGIME_TEXT[r.state]} (${r.vs200Pct > 0 ? '+' : ''}${String(r.vs200Pct).replace('.', ',')} % frente a su media de 200)` : null; };
 
 // Reglas según el régimen del mercado del valor: en el bajista solo compra con convicción alta y a medio tamaño.
 export const BEAR_MIN_SCORE = 80;

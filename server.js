@@ -6,6 +6,7 @@ import { getSummary, snapshot, getOrders, getEquityCurve, getRisk, placeOrder, a
 import { chat, autonomousReview, agentEnabled, agentMode } from './agent.js';
 import { startFundamentals, flushFundamentals, fundamentalsStats, ensureStatements, STMT_FIELDS } from './fundamentals.js';
 import { checkCorporateEvents } from './corporate.js';
+import { dailySummary } from './daily.js';
 import { refreshVolatility, refreshRegime } from './volatility.js';
 import { maybeSnapshot, evaluate, summary as scoreSummary } from './scorecard.js';
 import { analyze, analysisText, brief, rank, shortlist, analysisCoverage } from './analysis.js';
@@ -76,6 +77,7 @@ app.get('/api/state', (_req, res) => {
     orders: getOrders(), events: getEvents(), pending: getPending(), curve: getEquityCurve(), agentLog: getAgentLog(), agentEnabled: agentEnabled(), agentMode: agentMode(),
   });
 });
+app.get('/api/daily', (_req, res) => res.json(dailySummary()));
 app.get('/api/history/:symbol', (req, res) => res.json(getHistory(req.params.symbol.toUpperCase())));
 
 app.post('/api/order', (req, res) => {

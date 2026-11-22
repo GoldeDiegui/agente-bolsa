@@ -140,3 +140,7 @@ Los costes, pasivos y deuda se marcan en rojo al subir. Fuente: Yahoo Finance (S
 El filtro nunca fuerza ventas: solo frena compras nuevas. Si no hay datos del índice, no se aplica. El estado aparece en el panel de riesgo y en el registro del gestor.
 
 Los datos salen del gráfico diario de Yahoo y se guardan en `vol.json` (rama `estado`); se renuevan cada 12 h (valores) y 4 h (índices). Parámetros en `volatility.js`.
+
+## Resumen del día
+
+Tarjeta al principio de la web (`daily.js`): rentabilidad del día de la cartera frente al S&P 500, resultado en US$, rentabilidad desde el inicio, efectivo, las operaciones y eventos (splits/dividendos) del día con su motivo, y la última decisión del gestor. El día se cuenta en hora de Madrid; si aún no hay datos de hoy (fin de semana, antes de abrir), muestra la última sesión con actividad. En la nube viaja dentro de `state.json`; en local, `/api/daily`.
