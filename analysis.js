@@ -1,7 +1,7 @@
 // Motor de análisis: valoración relativa al sector, crecimiento, calidad, analistas, resultados y catalizadores.
 // Es un modelo de reglas transparente (cada punto se explica); NO predice precios ni es asesoramiento financiero.
 import { UNIVERSE, getQuote } from './market.js';
-import { getFundamentals, getNews, getEstimates, getNextEarnings, fundamentalsStats } from './fundamentals.js';
+import { getFundamentals, getNews, getEstimates, getNextEarnings, getInsiders, fundamentalsStats } from './fundamentals.js';
 import { getTech } from './technicals.js';
 
 const BY = new Map(UNIVERSE.map((u) => [u.symbol, u]));
@@ -272,19 +272,37 @@ export function momentumScore(t, price) {
   return { score: wavg(parts), reasons };
 }
 
+
+// Compras y ventas de directivos en 6 meses (Form 4). Las compras en mercado abierto pesan mucho; las ventas casi nada (suelen ser rutina de retribución).
+export function insiderScore(ins) {
+  if (!ins) return { score: null, reasons: [] };
+  const { buys, sells, netPct } = ins;
+  if (!buys && !sells) return { score: null, reasons: [] };
+  let s;
+  if (buys > 0) s = Math.min(92, 60 + 8 * Math.min(buys, 4)) - (sells > 3 * buys ? 8 : 0);
+  else s = 50 - Math.min(15, 1.5 * sells);
+  const net = netPct != null ? ` (neto ${sgn(netPct, 2)} % de sus acciones)` : '';
+  const text = `Directivos en los últimos 6 meses: ${buys} compra${buys === 1 ? '' : 's'} y ${sells} venta${sells === 1 ? '' : 's'} en mercado${net}`;
+  const type = buys >= 2 && buys >= sells ? 'pos' : buys === 0 && sells >= 6 && (netPct ?? 0) <= -15 ? 'neg' : 'info';
+  return { score: clamp(s, 20, 92), reasons: [{ type, text, short: buys ? `${buys} compras de directivos` : `${sells} ventas de directivos` }] };
+}
+
 // ---------- análisis completo ----------
-const WEIGHTS = { valuation: 0.243, growth: 0.198, quality: 0.162, analysts: 0.072, earnings: 0.072, revisions: 0.108, sentiment: 0.045, momentum: 0.10 };
+// Pesos relativos (se normalizan a 1): fundamentales ≈ 70 %, momentum ≈ 10 %, directivos ≈ 5 %, resto de señales de mercado
+const W_RAW = { valuation: 27, growth: 22, quality: 18, analysts: 8, earnings: 8, revisions: 12, sentiment: 5, momentum: 12, insiders: 6 };
+const W_SUM = Object.values(W_RAW).reduce((a, b) => a + b, 0);
+const WEIGHTS = Object.fromEntries(Object.entries(W_RAW).map(([k, v]) => [k, v / W_SUM]));
 const memo = new Map();
 
 export function analyze(symbol) {
   const u = BY.get(symbol);
   if (!u) return null;
   // se reutiliza el resultado solo si no han llegado datos nuevos (fundamentales o noticias) y es reciente
-  const f = getFundamentals(symbol), n = getNews(symbol), e = getEstimates(symbol), tk = getTech(symbol)?.fetchedAt ?? null;
+  const f = getFundamentals(symbol), n = getNews(symbol), e = getEstimates(symbol), tk = getTech(symbol)?.fetchedAt ?? null, ih = getInsiders(symbol);
   const hit = memo.get(symbol);
-  if (hit && hit.f === f && hit.n === n && hit.e === e && hit.tk === tk && Date.now() - hit.t < 60e3) return hit.a;
+  if (hit && hit.f === f && hit.n === n && hit.e === e && hit.tk === tk && hit.ih === ih && Date.now() - hit.t < 60e3) return hit.a;
   const a = compute(u);
-  memo.set(symbol, { t: Date.now(), a, f, n, e, tk });
+  memo.set(symbol, { t: Date.now(), a, f, n, e, tk, ih });
   return a;
 }
 
@@ -299,8 +317,9 @@ function compute(u) {
   const news = scoreNews(getNews(u.symbol)?.items);
   const rev = revisionsScore(getEstimates(u.symbol));
   const mom = momentumScore(getTech(u.symbol), q?.priceNative);
-  const scores = { valuation: val.score, growth: gro.score, quality: qua.score, analysts: ana.score, earnings: ear.score, revisions: rev.score, sentiment: news?.score ?? null, momentum: mom.score };
-  reasons.push(...val.reasons, ...gro.reasons, ...qua.reasons, ...ana.reasons, ...ear.reasons, ...rev.reasons, ...mom.reasons);
+  const insd = getInsiders(u.symbol), ins = insiderScore(insd);
+  const scores = { valuation: val.score, growth: gro.score, quality: qua.score, analysts: ana.score, earnings: ear.score, revisions: rev.score, sentiment: news?.score ?? null, momentum: mom.score, insiders: ins.score };
+  reasons.push(...val.reasons, ...gro.reasons, ...qua.reasons, ...ana.reasons, ...ear.reasons, ...rev.reasons, ...mom.reasons, ...ins.reasons);
 
   if (m.high52 && q?.priceNative) {
     const off = (q.priceNative / m.high52 - 1) * 100;
@@ -341,6 +360,7 @@ function compute(u) {
     ...base, verdict, score: score == null ? null : Math.round(score), confidence: +confidence.toFixed(2),
     scores: Object.fromEntries(Object.entries(scores).map(([k, v]) => [k, v == null ? null : Math.round(v)])),
     reasons, catalysts, headlines, redFlags: news?.red ?? 0, eventRisk, nextEarnings,
+    insiders: insd ? { buys: insd.buys, sells: insd.sells, netPct: insd.netPct, recent: (insd.recent ?? []).slice(0, 5) } : null,
     dataAgeH: Math.round((Date.now() - f.fetchedAt) / 3600e3), source: f.source,
   };
 }
@@ -376,7 +396,7 @@ export function analysisText(a) {
   const s = a.scores, p = (k, n) => (s[k] == null ? null : `${n} ${s[k]}`);
   const lines = [
     `${head} — Veredicto: ${a.verdict.toUpperCase()} · puntuación ${a.score}/100 (cobertura de datos ${Math.round(a.confidence * 100)} %)`,
-    [p('valuation', 'Valoración'), p('growth', 'Crecimiento'), p('quality', 'Calidad'), p('analysts', 'Analistas'), p('earnings', 'Resultados'), p('revisions', 'Revisiones'), p('momentum', 'Momentum'), p('sentiment', 'Noticias')].filter(Boolean).join(' · '),
+    [p('valuation', 'Valoración'), p('growth', 'Crecimiento'), p('quality', 'Calidad'), p('analysts', 'Analistas'), p('earnings', 'Resultados'), p('revisions', 'Revisiones'), p('momentum', 'Momentum'), p('insiders', 'Directivos'), p('sentiment', 'Noticias')].filter(Boolean).join(' · '),
     ...a.reasons.slice(0, 9).map((r) => `${ICON[r.type]} ${r.text}`),
   ];
   if (a.catalysts.length) lines.push('Catalizadores:', ...a.catalysts.slice(0, 5).map((c) => `• [${c.tag}] ${c.text}`));

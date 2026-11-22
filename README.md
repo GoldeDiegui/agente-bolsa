@@ -153,3 +153,12 @@ Nuevo componente **Momentum** del análisis (peso 10 %; el resto de pesos se red
 - RSI de 14 sesiones (penaliza la sobrecompra), distancia al máximo de 52 semanas y fuerza relativa de 6 meses frente a su índice.
 En el detalle de cada valor, las razones a favor/en contra incluyen estas señales, y hay un **gráfico de precios** (3M/6M/1A) con las medias de 50 y 200 y marcas de tus compras y ventas. El marcador de aciertos mide el componente por separado, así que se verá si aporta; si no, se baja su peso.
 Datos: ciclo de datos (cada 3 h) descarga todo el universo (TECH_BUDGET_SECONDS, 90 por defecto; TTL 20 h); el ciclo de operar solo refresca cartera y candidatos (6 h). Se guardan en `technicals.json` y la web lee `charts.json`. Límite de un ciclo: 780 s (el de datos reparte: fundamentales 270 s).
+
+## Operaciones de directivos (insiders)
+
+Nuevo componente **Directivos** del análisis (peso ≈ 5 %), solo para el S&P 500 (los Form 4 de la SEC son de EE. UU.; en el IBEX queda sin dato y no puntúa ni penaliza). Fuente: Yahoo Finance (módulos `netSharePurchaseActivity` e `insiderTransactions`), sin registro.
+- Compras de directivos en mercado abierto en 6 meses: puntúan alto (60 + 8 por compra, hasta 92; varias compras = señal fuerte).
+- Ventas: casi neutras (suelen ser rutina de retribución); solo penalizan algo si no hay compras y hay muchas ventas.
+- En el detalle de cada valor aparecen las últimas operaciones (fecha, quién, cargo, acciones e importe). Se filtran concesiones, ejercicios de opciones y regalos.
+- Descarga: cartera y candidatos cada 24 h; el resto del S&P 500 cada 3 días (`YAHOO_INS_PER_MIN`, 30 por defecto). Se guarda en `fundamentals.json`.
+Los pesos se normalizan en `analysis.js` (`W_RAW`). El marcador de aciertos mide Directivos por separado.

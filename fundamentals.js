@@ -16,13 +16,14 @@ const FUND_TTL = 24 * HOUR;   // los fundamentales cambian despacio: una vez al 
 const NEWS_TTL = 3 * HOUR;    // noticias de lo que tienes en cartera o estás vigilando
 const RETRY_TTL = 6 * HOUR;   // tras un fallo, no se insiste hasta pasadas 6 h
 const CAL_TTL = 12 * HOUR;
+const INS_TTL_WATCH = 24 * HOUR, INS_TTL = 3 * 24 * HOUR; // directivos: lo que tienes y los candidatos cada día; el resto cada 3 días
 const STMT_TTL = 5 * 24 * HOUR; // cuentas (ingresos, balance…): cambian solo al publicar resultados
 const EST_TTL = 24 * HOUR;    // revisiones de estimaciones de analistas: una vez al día
 
 const BY = new Map(UNIVERSE.map((u) => [u.symbol, u]));
 export const hasFinnhub = () => Boolean(FINNHUB_KEY);
 
-const cache = { fundamentals: {}, news: {}, estimates: {}, statements: {}, calendar: { fetchedAt: 0, dates: {} } };
+const cache = { fundamentals: {}, news: {}, estimates: {}, statements: {}, insiders: {}, calendar: { fetchedAt: 0, dates: {} } };
 const status = { errors: {}, paused: { finnhub: 0, yahoo: 0 } };
 
 // ---------- caché en disco ----------
@@ -34,6 +35,7 @@ function load() {
     cache.news = s.news ?? {};
     cache.estimates = s.estimates ?? {};
     cache.statements = s.statements ?? {};
+    cache.insiders = s.insiders ?? {};
     cache.calendar = s.calendar ?? { fetchedAt: 0, dates: {} };
     console.log(`Datos fundamentales recuperados (${Object.keys(cache.fundamentals).length} valores)`);
   } catch (e) {
@@ -69,6 +71,7 @@ const limiters = {
   finnhub: makeLimiter(Number(process.env.FINNHUB_PER_MIN || 50)), // el plan gratuito permite unas 60/min
   yahoo: makeLimiter(Number(process.env.YAHOO_FUND_PER_MIN || 15)),
   yahooStmt: makeLimiter(Number(process.env.YAHOO_STMT_PER_MIN || 40)),
+  yahooIns: makeLimiter(Number(process.env.YAHOO_INS_PER_MIN || 30)),
 };
 
 async function http(url, { headers = {}, timeout = 8000, as = 'json' } = {}) {
@@ -83,10 +86,10 @@ async function http(url, { headers = {}, timeout = 8000, as = 'json' } = {}) {
 }
 
 async function viaProvider(name, fn) {
-  if (Date.now() < status.paused[name === 'yahooStmt' ? 'yahoo' : name]) { const e = new Error('proveedor en pausa'); e.paused = true; throw e; }
+  if (Date.now() < status.paused[name.startsWith('yahoo') ? 'yahoo' : name]) { const e = new Error('proveedor en pausa'); e.paused = true; throw e; }
   await limiters[name]();
   try { return await fn(); }
-  catch (e) { if (e.status === 429) status.paused[name === 'yahooStmt' ? 'yahoo' : name] = Date.now() + 60000; throw e; }
+  catch (e) { if (e.status === 429) status.paused[name.startsWith('yahoo') ? 'yahoo' : name] = Date.now() + 60000; throw e; }
 }
 
 function noteError(kind, symbol, err) {
@@ -386,6 +389,56 @@ export function exportStatements() {
   return { fields: STMT_KEYS, data };
 }
 
+
+// ---------- Operaciones de directivos (Form 4 de la SEC, vía Yahoo): solo S&P 500 ----------
+export function normalizeYahooInsiders(r = {}) {
+  const n = r.netSharePurchaseActivity ?? {};
+  const buys = raw(n, 'buyInfoCount') ?? 0, sells = raw(n, 'sellInfoCount') ?? 0;
+  const buyShares = raw(n, 'buyInfoShares') ?? 0, sellShares = raw(n, 'sellInfoShares') ?? 0, total = raw(n, 'totalInsiderShares');
+  const recent = (r.insiderTransactions?.transactions ?? [])
+    .map((t) => ({
+      name: t.filerName ?? '', role: t.filerRelation ?? '', text: t.transactionText ?? '',
+      shares: raw(t, 'shares'), value: raw(t, 'value'), t: (raw(t, 'startDate') ?? 0) * 1000,
+    }))
+    .filter((t) => t.t && /purchase|sale|buy|sell/i.test(t.text)) // sin concesiones, ejercicios de opciones ni regalos
+    .sort((a, b) => b.t - a.t).slice(0, 6);
+  if (!buys && !sells && !recent.length) return { none: true };
+  return { buys, sells, buyShares, sellShares, netPct: total > 0 ? +(((buyShares - sellShares) / total) * 100).toFixed(2) : null, period: n.period ?? '6m', recent };
+}
+async function fetchYahooInsiders(symbol) {
+  return viaProvider('yahooIns', async () => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const { cookie, crumb } = await yahooAuth();
+      const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=netSharePurchaseActivity,insiderTransactions&crumb=${encodeURIComponent(crumb)}`;
+      try {
+        const data = await http(url, { headers: { Cookie: cookie } });
+        const r = data?.quoteSummary?.result?.[0];
+        if (!r) throw new Error('Yahoo no devuelve datos de directivos');
+        return { fetchedAt: Date.now(), ...normalizeYahooInsiders(r) };
+      } catch (e) {
+        if ((e.status === 401 || e.status === 403) && attempt === 0) { yAuth = null; continue; }
+        throw e;
+      }
+    }
+  });
+}
+const needsIns = (s, now, watched) => {
+  if (BY.get(s)?.market !== 'S&P 500' || status.paused.yahoo > now) return false; // los Form 4 son de EE. UU.
+  const e = cache.insiders[s];
+  return !e || now - (e.failedAt ?? e.fetchedAt) > (e.failedAt ? RETRY_TTL : watched ? INS_TTL_WATCH : INS_TTL);
+};
+async function refreshInsiders(s) {
+  const prev = cache.insiders[s];
+  try { cache.insiders[s] = await fetchYahooInsiders(s); }
+  catch (e) {
+    if (e.paused || e.status === 429) return;
+    cache.insiders[s] = { ...(prev?.fetchedAt ? prev : {}), failedAt: Date.now() };
+    noteError('directivos', s, e);
+  }
+  markDirty();
+}
+export const getInsiders = (symbol) => { const e = cache.insiders[symbol]; return e?.fetchedAt && !e.none ? e : null; };
+
 // ---------- API pública ----------
 export const providerFor = (symbol) => (BY.get(symbol)?.market === 'S&P 500' && FINNHUB_KEY ? 'finnhub' : 'yahoo');
 export const getFundamentals = (symbol) => { const e = cache.fundamentals[symbol]; return e?.m ? e : null; };
@@ -405,6 +458,7 @@ export function fundamentalsStats() {
   return {
     analyzed,
     statements: Object.values(cache.statements).filter((e) => e?.fetchedAt).length,
+    insiders: Object.values(cache.insiders).filter((e) => e?.fetchedAt).length,
     total: UNIVERSE.filter((u) => u.symbol !== 'SPY').length,
     finnhub: hasFinnhub(),
     errors: status.errors,
@@ -482,7 +536,7 @@ async function refreshNews(s) {
 // Devuelve una función "trabajo()" que hace UNA descarga pendiente (por prioridad) y dice si hizo algo.
 function makeWorker({ getWatched = () => [], getShortlist = () => [] } = {}) {
   const symbols = UNIVERSE.map((u) => u.symbol).filter((s) => s !== 'SPY');
-  let cursor = 0, stmtCursor = 0;
+  let cursor = 0, stmtCursor = 0, insCursor = 0;
   return async function work() {
     const now = Date.now();
     try {
@@ -497,6 +551,8 @@ function makeWorker({ getWatched = () => [], getShortlist = () => [] } = {}) {
       // Cuentas de lo que tienes y de los candidatos: antes que el resto del universo
       const st = [...new Set([...watched, ...getShortlist()])].find((s) => BY.has(s) && needsStmt(s, now));
       if (st) { await refreshStatements(st); return true; }
+      const ins = [...new Set([...watched, ...getShortlist()])].find((s) => needsIns(s, now, true));
+      if (ins) { await refreshInsiders(ins); return true; }
       for (let i = 0; i < symbols.length; i++) {
         const s = symbols[(cursor + i) % symbols.length];
         if (needsFund(s, now)) { cursor = (cursor + i + 1) % symbols.length; await refreshFund(s); return true; }
@@ -504,6 +560,10 @@ function makeWorker({ getWatched = () => [], getShortlist = () => [] } = {}) {
       for (let i = 0; i < symbols.length; i++) {
         const s = symbols[(stmtCursor + i) % symbols.length];
         if (needsStmt(s, now)) { stmtCursor = (stmtCursor + i + 1) % symbols.length; await refreshStatements(s); return true; }
+      }
+      for (let i = 0; i < symbols.length; i++) {
+        const s = symbols[(insCursor + i) % symbols.length];
+        if (needsIns(s, now, false)) { insCursor = (insCursor + i + 1) % symbols.length; await refreshInsiders(s); return true; }
       }
     } catch (e) {
       noteError('planificador', null, e);
