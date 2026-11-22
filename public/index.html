@@ -201,7 +201,7 @@ function renderCoverage(c) {
   $('anInfo').textContent = `· ${c.analyzed} de ${c.total} valores con datos fundamentales` + (c.analyzed < c.total ? ' (se siguen descargando en segundo plano)' : '');
 }
 const HNAME = { 5: '5 sesiones (≈1 semana)', 20: '20 sesiones (≈1 mes)', 60: '60 sesiones (≈3 meses)' };
-const CNAME = { score: 'Puntuación total', valuation: 'Valoración', growth: 'Crecimiento', quality: 'Calidad', analysts: 'Analistas', earnings: 'Resultados', revisions: 'Revisiones de estimaciones', momentum: 'Momentum', sentiment: 'Noticias' };
+const CNAME = { score: 'Puntuación total', valuation: 'Valoración', growth: 'Crecimiento', quality: 'Calidad', analysts: 'Analistas', earnings: 'Resultados', revisions: 'Revisiones de estimaciones', momentum: 'Momentum', insiders: 'Directivos (insiders)', sentiment: 'Noticias' };
 const sg = (x, d = 2) => (x == null ? '–' : (x > 0 ? '+' : '') + x.toFixed(d));
 function renderScore(sc) {
   if (!sc) return;
@@ -242,7 +242,7 @@ async function loadOpps() {
 }
 for (const id of ['opVerdict', 'opMarket', 'opSort']) document.addEventListener('DOMContentLoaded', () => $(id).addEventListener('change', loadOpps));
 
-const NAMES = { valuation:'Valoración', growth:'Crecimiento', quality:'Calidad', analysts:'Analistas', earnings:'Resultados', revisions:'Revisiones', momentum:'Momentum', sentiment:'Noticias' };
+const NAMES = { valuation:'Valoración', growth:'Crecimiento', quality:'Calidad', analysts:'Analistas', earnings:'Resultados', revisions:'Revisiones', momentum:'Momentum', insiders:'Directivos', sentiment:'Noticias' };
 
 // ---------- Cuentas de la empresa (ingresos, gastos, balance) ----------
 let FIN_ALL = null, FIN_P = null, finMode = 'qy'; // FIN_ALL: datos; FIN_P: la descarga en curso
@@ -386,6 +386,7 @@ async function openDetail(symbol) {
       (rs('info') ? `<h4>Otros datos</h4><ul class="rs">${rs('info')}</ul>` : '') +
       `<h4>Precio · último año <span id="prange" style="text-transform:none;letter-spacing:0;margin-left:8px">${[[63,'3M'],[126,'6M'],[260,'1A']].map(([n,l]) => `<button class="sec${n === chRange ? ' on' : ''}" data-n="${n}" style="padding:1px 8px;font-size:11px">${l}</button>`).join(' ')}</span></h4><div id="pbox" class="chartbox" style="height:200px"><canvas id="pcanvas"></canvas></div>` +
       '<div id="fin"><h4>Cuentas</h4><p style="color:var(--mut);font-size:12px">Cargando…</p></div>' +
+      (a.insiders?.recent?.length ? `<h4>Operaciones de directivos (últimos meses)</h4><ul class="rs">${a.insiders.recent.map(t => `<li class="info">${new Date(t.t).toLocaleDateString('es-ES')} · ${esc(t.name)}${t.role ? ' (' + esc(t.role) + ')' : ''}: ${esc(t.text)}${t.shares ? ', ' + Number(t.shares).toLocaleString('es-ES') + ' acciones' : ''}${t.value ? ' ≈ ' + usd(t.value) : ''}</li>`).join('')}</ul>` : '') +
       (a.catalysts?.length ? `<h4>Catalizadores y eventos</h4><ul class="rs">${a.catalysts.map(c => `<li class="info">${esc(c.text)}</li>`).join('')}</ul>` : '') +
       (a.headlines?.length ? `<h4>Titulares recientes</h4><ul class="rs">${a.headlines.map(h => `<li class="info">${esc(h.headline)} <small style="color:var(--mut)">${esc(h.source ?? '')}</small></li>`).join('')}</ul>` : '') +
       `<p style="color:var(--mut);font-size:11px;margin-top:14px">Modelo orientativo basado en reglas y datos públicos (medianas del sector calculadas con el propio universo). No predice el futuro ni es asesoramiento financiero.</p>`;
