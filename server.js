@@ -1,11 +1,12 @@
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { refreshPrices, getAllQuotes, getHistory, marketStats } from './market.js';
+import { refreshPrices, getAllQuotes, getHistory, marketStats, UNIVERSE } from './market.js';
 import { getSummary, snapshot, getOrders, getEquityCurve, getRisk, placeOrder, addAgentLog, getAgentLog, flushState, resetPortfolio, getWatchedSymbols, addLimitOrder, cancelLimitOrder, getPending, checkPending, getEvents } from './portfolio.js';
 import { chat, autonomousReview, agentEnabled, agentMode } from './agent.js';
 import { startFundamentals, flushFundamentals, fundamentalsStats, ensureStatements, STMT_FIELDS } from './fundamentals.js';
 import { checkCorporateEvents } from './corporate.js';
+import { refreshTech, ensureTech, getTech } from './technicals.js';
 import { dailySummary } from './daily.js';
 import { refreshVolatility, refreshRegime } from './volatility.js';
 import { maybeSnapshot, evaluate, summary as scoreSummary } from './scorecard.js';
@@ -76,6 +77,11 @@ app.get('/api/state', (_req, res) => {
     quotes: getAllQuotes(), market: marketStats(), analysis: analysisCoverage(), portfolio: portfolioView(), risk: getRisk(),
     orders: getOrders(), events: getEvents(), pending: getPending(), curve: getEquityCurve(), agentLog: getAgentLog(), agentEnabled: agentEnabled(), agentMode: agentMode(),
   });
+});
+app.get('/api/chart/:symbol', async (req, res) => {
+  const sym = req.params.symbol.toUpperCase();
+  try { const sr = await ensureTech(sym); sr ? res.json({ ...sr, tech: getTech(sym) }) : res.status(404).json({ error: 'Sin histórico de precios' }); }
+  catch (e) { res.status(502).json({ error: e.message }); }
 });
 app.get('/api/daily', (_req, res) => res.json(dailySummary()));
 app.get('/api/history/:symbol', (req, res) => res.json(getHistory(req.params.symbol.toUpperCase())));
@@ -167,10 +173,14 @@ async function runEvents() {
 }
 // Volatilidad (stop-loss y tamaños) y régimen de mercado: cada 30 minutos
 async function runVol() {
-  try { await refreshRegime(); await refreshVolatility([...getWatchedSymbols(), ...shortlist(60).slice(0, 30)], { budgetMs: 60000 }); }
+  try { await refreshRegime(); await refreshTech([...getWatchedSymbols(), ...shortlist(60).slice(0, 30)], { budgetMs: 40000, ttlMs: 6 * 3600e3 }); await refreshVolatility([...getWatchedSymbols(), ...shortlist(60).slice(0, 30)], { budgetMs: 60000 }); }
   catch (e) { console.warn('Volatilidad fallida:', e.message); }
 }
 setTimeout(runVol, 15000);
+// Señales de precio de todo el universo: cada 6 horas (la primera vez tarda un minuto o dos)
+async function runTechAll() { try { await refreshTech(UNIVERSE.map((u) => u.symbol), { budgetMs: 180000 }); } catch (e) { console.warn('Señales de precio fallidas:', e.message); } }
+setTimeout(runTechAll, 45000);
+setInterval(runTechAll, 6 * 3600e3);
 setInterval(runVol, 30 * 60 * 1000);
 // Marcador de aciertos: cohorte semanal y evaluación de resultados maduros (cada hora)
 async function runScorecard() {

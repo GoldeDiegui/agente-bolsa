@@ -8,6 +8,7 @@ import { refreshPrices, getAllQuotes, marketStats, UNIVERSE } from './market.js'
 import { getSummary, snapshot, getOrders, getEquityCurve, getRisk, getPending, checkPending, getWatchedSymbols, addAgentLog, getAgentLog, getEvents, flushState } from './portfolio.js';
 import { checkCorporateEvents } from './corporate.js';
 import { maybeSnapshot, evaluate, summary as scoreSummary } from './scorecard.js';
+import { refreshTech, exportCharts, techCount } from './technicals.js';
 import { dailySummary } from './daily.js';
 import { refreshVolatility, refreshRegime, regimeSummary } from './volatility.js';
 import { runFundamentalsBudget, flushFundamentals, fundamentalsStats, hasFinnhub, exportStatements } from './fundamentals.js';
@@ -17,8 +18,8 @@ import { MARKETS, marketClock, openMarkets, scheduleText, ENFORCE } from './hour
 
 const mode = process.argv[2] || process.env.CYCLE_MODE || 'trade';
 const SITE_DIR = process.env.SITE_DIR || path.join(path.dirname(new URL(import.meta.url).pathname), 'site');
-const FUND_BUDGET_MS = Number(process.env.FUND_BUDGET_SECONDS || (mode === 'trade' ? 90 : 330)) * 1000;
-const MAX_MS = Number(process.env.CYCLE_MAX_SECONDS || 600) * 1000; // tope duro
+const FUND_BUDGET_MS = Number(process.env.FUND_BUDGET_SECONDS || (mode === 'trade' ? 90 : 270)) * 1000;
+const MAX_MS = Number(process.env.CYCLE_MAX_SECONDS || 780) * 1000; // tope duro
 const LOG_EVERY_MS = 60 * 60 * 1000; // sin operaciones, se anota "sin cambios" como mucho cada hora
 
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
@@ -55,6 +56,13 @@ try {
     const v = await refreshVolatility([...getWatchedSymbols(), ...worklist.getShortlist()], { budgetMs: 40000 });
     const rs = regimeSummary();
     log(`Volatilidad: ${v.done} nuevas · mercado: ${Object.entries(rs.markets).map(([m, r]) => `${m} ${r.state}`).join(', ') || 'sin datos'}`);
+  }
+
+  // 2c) Señales de precio (momentum, medias, RSI) y serie de cierres para el gráfico: todo el universo en el ciclo de datos
+  {
+    const syms = mode === 'trade' ? [...getWatchedSymbols(), ...worklist.getShortlist()] : UNIVERSE.map((u) => u.symbol);
+    const t = await refreshTech(syms, mode === 'trade' ? { budgetMs: 20000, ttlMs: 6 * 3600e3 } : { budgetMs: Number(process.env.TECH_BUDGET_SECONDS || 90) * 1000 });
+    log(`Precios históricos: ${t.done} descargas · señales de precio en ${techCount()} valores`);
   }
 
   // 3) Splits y dividendos de lo que tengo (antes de decidir nada, para que los precios y las acciones cuadren)
@@ -119,6 +127,7 @@ function exportSite() {
   fs.mkdirSync(SITE_DIR, { recursive: true });
   fs.writeFileSync(path.join(SITE_DIR, 'analyses.json'), JSON.stringify({ updatedAt: Date.now(), analyses: all }));
   fs.writeFileSync(path.join(SITE_DIR, 'financials.json'), JSON.stringify(exportStatements()));
+  fs.writeFileSync(path.join(SITE_DIR, 'charts.json'), JSON.stringify(exportCharts()));
   const curve = getEquityCurve();
   const step = Math.max(1, Math.ceil(curve.length / 700));
   const now = Date.now();

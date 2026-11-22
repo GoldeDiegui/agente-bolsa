@@ -144,3 +144,12 @@ Los datos salen del gráfico diario de Yahoo y se guardan en `vol.json` (rama `e
 ## Resumen del día
 
 Tarjeta al principio de la web (`daily.js`): rentabilidad del día de la cartera frente al S&P 500, resultado en US$, rentabilidad desde el inicio, efectivo, las operaciones y eventos (splits/dividendos) del día con su motivo, y la última decisión del gestor. El día se cuenta en hora de Madrid; si aún no hay datos de hoy (fin de semana, antes de abrir), muestra la última sesión con actividad. En la nube viaja dentro de `state.json`; en local, `/api/daily`.
+
+## Señales de precio y gráfico (`technicals.js`)
+
+Nuevo componente **Momentum** del análisis (peso 10 %; el resto de pesos se reduce un 10 % proporcionalmente), calculado con el gráfico diario de Yahoo (2 años, ajustado por splits):
+- Rentabilidad de 12 meses saltándose el último mes («12-1») y de 6 meses, como **percentil dentro de su mercado** (S&P 500 o IBEX 35).
+- Tendencia: precio y medias de 50 y 200 sesiones.
+- RSI de 14 sesiones (penaliza la sobrecompra), distancia al máximo de 52 semanas y fuerza relativa de 6 meses frente a su índice.
+En el detalle de cada valor, las razones a favor/en contra incluyen estas señales, y hay un **gráfico de precios** (3M/6M/1A) con las medias de 50 y 200 y marcas de tus compras y ventas. El marcador de aciertos mide el componente por separado, así que se verá si aporta; si no, se baja su peso.
+Datos: ciclo de datos (cada 3 h) descarga todo el universo (TECH_BUDGET_SECONDS, 90 por defecto; TTL 20 h); el ciclo de operar solo refresca cartera y candidatos (6 h). Se guardan en `technicals.json` y la web lee `charts.json`. Límite de un ciclo: 780 s (el de datos reparte: fundamentales 270 s).

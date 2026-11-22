@@ -2,6 +2,7 @@
 // Es un modelo de reglas transparente (cada punto se explica); NO predice precios ni es asesoramiento financiero.
 import { UNIVERSE, getQuote } from './market.js';
 import { getFundamentals, getNews, getEstimates, getNextEarnings, fundamentalsStats } from './fundamentals.js';
+import { getTech } from './technicals.js';
 
 const BY = new Map(UNIVERSE.map((u) => [u.symbol, u]));
 const DAY = 86400e3;
@@ -241,19 +242,49 @@ function earningsScore(f) {
   return { score: s, reasons: [{ type: ratio >= 0.75 && avg > 0 ? 'pos' : ratio <= 0.25 ? 'neg' : 'info', text: `Superó las estimaciones de beneficio en ${e.beats} de los últimos ${e.total} trimestres (sorpresa media ${sgn(avg)} %)`, short: `superó estimaciones en ${e.beats} de ${e.total} trimestres` }] };
 }
 
+
+// Señales de precio: momentum frente al resto de su mercado, tendencia (medias de 50 y 200), RSI y fuerza relativa.
+// Es un componente más del modelo (peso pequeño); el marcador de aciertos dirá si aporta.
+export function momentumScore(t, price) {
+  if (!t) return { score: null, reasons: [] };
+  const parts = [], reasons = [];
+  const mk = t.market === 'IBEX 35' ? 'IBEX 35' : 'S&P 500';
+  const m = t.mom12_1 ?? t.ret12m;
+  if (t.pctMom != null && m != null) {
+    parts.push({ s: t.pctMom, w: 0.4 });
+    reasons.push({ type: t.pctMom >= 75 ? 'pos' : t.pctMom <= 25 ? 'neg' : 'info', text: `Rentabilidad de 12 meses (sin el último mes) ${sgn(m, 0)} %: mejor que el ${t.pctMom} % de los valores del ${mk}`, short: `momentum 12 meses ${sgn(m, 0)} % (percentil ${t.pctMom})` });
+  }
+  if (t.pctRet6 != null) parts.push({ s: t.pctRet6, w: 0.2 });
+  const px = price ?? t.last;
+  if (t.sma200 != null && t.sma50 != null) {
+    const above200 = px > t.sma200, cross = t.sma50 > t.sma200;
+    parts.push({ s: 100 * (0.5 * above200 + 0.3 * cross + 0.2 * (px > t.sma50)), w: 0.3 });
+    const d = (px / t.sma200 - 1) * 100;
+    reasons.push({ type: above200 && cross ? 'pos' : !above200 && !cross ? 'neg' : 'info', text: `Cotiza ${above200 ? 'por encima' : 'por debajo'} de su media de 200 sesiones (${sgn(d, 0)} %) y la media de 50 está ${cross ? 'sobre' : 'bajo'} la de 200`, short: above200 ? 'tendencia alcista (sobre su media de 200)' : 'tendencia bajista (bajo su media de 200)' });
+  }
+  if (t.rsi != null) {
+    parts.push({ s: lin(t.rsi, [[20, 45], [30, 55], [50, 60], [65, 60], [75, 40], [85, 20]]), w: 0.1 });
+    if (t.rsi >= 75) reasons.push({ type: 'neg', text: `RSI de ${t.rsi}: sobrecomprada a corto plazo (riesgo de corrección)`, short: `RSI ${t.rsi}, sobrecomprada` });
+    else if (t.rsi <= 30) reasons.push({ type: 'info', text: `RSI de ${t.rsi}: sobrevendida a corto plazo` });
+  }
+  if (t.offHigh != null && t.offHigh >= -3) reasons.push({ type: 'info', text: `Cerca de su máximo de 52 semanas (${sgn(t.offHigh, 1)} %)` });
+  if (t.rs6 != null && Math.abs(t.rs6) >= 5) reasons.push({ type: 'info', text: `En 6 meses ${t.rs6 > 0 ? 'supera' : 'queda por detrás de'} a su índice en ${fmt(Math.abs(t.rs6), 0)} puntos` });
+  return { score: wavg(parts), reasons };
+}
+
 // ---------- análisis completo ----------
-const WEIGHTS = { valuation: 0.27, growth: 0.22, quality: 0.18, analysts: 0.08, earnings: 0.08, revisions: 0.12, sentiment: 0.05 };
+const WEIGHTS = { valuation: 0.243, growth: 0.198, quality: 0.162, analysts: 0.072, earnings: 0.072, revisions: 0.108, sentiment: 0.045, momentum: 0.10 };
 const memo = new Map();
 
 export function analyze(symbol) {
   const u = BY.get(symbol);
   if (!u) return null;
   // se reutiliza el resultado solo si no han llegado datos nuevos (fundamentales o noticias) y es reciente
-  const f = getFundamentals(symbol), n = getNews(symbol), e = getEstimates(symbol);
+  const f = getFundamentals(symbol), n = getNews(symbol), e = getEstimates(symbol), tk = getTech(symbol)?.fetchedAt ?? null;
   const hit = memo.get(symbol);
-  if (hit && hit.f === f && hit.n === n && hit.e === e && Date.now() - hit.t < 60e3) return hit.a;
+  if (hit && hit.f === f && hit.n === n && hit.e === e && hit.tk === tk && Date.now() - hit.t < 60e3) return hit.a;
   const a = compute(u);
-  memo.set(symbol, { t: Date.now(), a, f, n, e });
+  memo.set(symbol, { t: Date.now(), a, f, n, e, tk });
   return a;
 }
 
@@ -267,8 +298,9 @@ function compute(u) {
   const val = valuation(u, m), gro = growth(m), qua = quality(m, u), ana = analystsScore(f, q?.priceNative), ear = earningsScore(f);
   const news = scoreNews(getNews(u.symbol)?.items);
   const rev = revisionsScore(getEstimates(u.symbol));
-  const scores = { valuation: val.score, growth: gro.score, quality: qua.score, analysts: ana.score, earnings: ear.score, revisions: rev.score, sentiment: news?.score ?? null };
-  reasons.push(...val.reasons, ...gro.reasons, ...qua.reasons, ...ana.reasons, ...ear.reasons, ...rev.reasons);
+  const mom = momentumScore(getTech(u.symbol), q?.priceNative);
+  const scores = { valuation: val.score, growth: gro.score, quality: qua.score, analysts: ana.score, earnings: ear.score, revisions: rev.score, sentiment: news?.score ?? null, momentum: mom.score };
+  reasons.push(...val.reasons, ...gro.reasons, ...qua.reasons, ...ana.reasons, ...ear.reasons, ...rev.reasons, ...mom.reasons);
 
   if (m.high52 && q?.priceNative) {
     const off = (q.priceNative / m.high52 - 1) * 100;
@@ -344,7 +376,7 @@ export function analysisText(a) {
   const s = a.scores, p = (k, n) => (s[k] == null ? null : `${n} ${s[k]}`);
   const lines = [
     `${head} — Veredicto: ${a.verdict.toUpperCase()} · puntuación ${a.score}/100 (cobertura de datos ${Math.round(a.confidence * 100)} %)`,
-    [p('valuation', 'Valoración'), p('growth', 'Crecimiento'), p('quality', 'Calidad'), p('analysts', 'Analistas'), p('earnings', 'Resultados'), p('revisions', 'Revisiones'), p('sentiment', 'Noticias')].filter(Boolean).join(' · '),
+    [p('valuation', 'Valoración'), p('growth', 'Crecimiento'), p('quality', 'Calidad'), p('analysts', 'Analistas'), p('earnings', 'Resultados'), p('revisions', 'Revisiones'), p('momentum', 'Momentum'), p('sentiment', 'Noticias')].filter(Boolean).join(' · '),
     ...a.reasons.slice(0, 9).map((r) => `${ICON[r.type]} ${r.text}`),
   ];
   if (a.catalysts.length) lines.push('Catalizadores:', ...a.catalysts.slice(0, 5).map((c) => `• [${c.tag}] ${c.text}`));
