@@ -369,9 +369,9 @@ function renderPortfolio(pf) {
   $('k-inv').textContent = usd(pf.invested);
   $('k-ret').textContent = pct(pf.totalReturnPct);
   $('k-ret').className = cls(pf.totalReturnPct);
-  $('pos').innerHTML = '<tr><th>Valor</th><th class="r">Acc.</th><th class="r">Coste med.</th><th class="r">Precio</th><th class="r">Valor</th><th class="r">P&amp;L</th><th class="r">Peso</th><th>Tesis</th></tr>' +
-    (pf.positions.map(p => `<tr><td><b class="sym" data-sym="${esc(p.symbol)}">${esc(p.symbol)}</b> <span class="tag">${esc(p.sector)}</span></td><td class="r">${p.shares}</td><td class="r">${usd(p.avgCost)}</td><td class="r">${usd(p.price)}</td><td class="r">${usd(p.value)}</td><td class="r ${cls(p.pnl)}">${usd(p.pnl)} (${pct(p.pnlPct)})</td><td class="r">${p.weightPct}%</td><td>${vdBadge(p.thesis)}</td></tr>`).join('')
-      || '<tr><td colspan="8" style="color:var(--mut)">Aún no hay posiciones. Compra manualmente o pide al agente que invierta.</td></tr>');
+  $('pos').innerHTML = '<tr><th>Valor</th><th class="r">Acc.</th><th class="r">Coste med.</th><th class="r">Precio</th><th class="r">Valor</th><th class="r">P&amp;L</th><th class="r">Peso</th><th class="r" title="Nivel de stop-loss de cada valor: 3,5 veces su volatilidad diaria (ATR), entre -6 % y -15 %">Stop</th><th>Tesis</th></tr>' +
+    (pf.positions.map(p => `<tr><td><b class="sym" data-sym="${esc(p.symbol)}">${esc(p.symbol)}</b> <span class="tag">${esc(p.sector)}</span></td><td class="r">${p.shares}</td><td class="r">${usd(p.avgCost)}</td><td class="r">${usd(p.price)}</td><td class="r">${usd(p.value)}</td><td class="r ${cls(p.pnl)}">${usd(p.pnl)} (${pct(p.pnlPct)})</td><td class="r">${p.weightPct}%</td><td class="r" title="${p.atrPct != null ? 'Volatilidad diaria (ATR) ' + p.atrPct + ' %' : 'Sin datos de volatilidad: stop estándar'}">${p.stopPct != null ? p.stopPct.toLocaleString('es-ES') + ' %' : '–'}</td><td>${vdBadge(p.thesis)}</td></tr>`).join('')
+      || '<tr><td colspan="9" style="color:var(--mut)">Aún no hay posiciones. Compra manualmente o pide al agente que invierta.</td></tr>');
 }
 
 function renderRisk(r, pf) {
@@ -380,6 +380,8 @@ function renderRisk(r, pf) {
     ['Efectivo', r.cashPct + '%'], ['Concentración (HHI)', r.concentrationHHI],
     ['Vs S&P 500', pct(r.vsSpyPct)], ['Límite por valor', r.maxPositionLimitPct + '%'],
   ];
+  const rg = r.regime?.markets?.['S&P 500'];
+  if (rg) rows.push(['Mercado (S&P 500)', `<span class="${rg.state === 'alcista' ? 'up' : rg.state === 'bajista' ? 'down' : ''}" title="Posición del índice frente a sus medias de 50 y 200 sesiones. Alcista: compra normal · cautela: compra a ¾ y efectivo 20 % · bajista: solo tesis de 80+ a medio tamaño y efectivo 25 %">${rg.state} (${rg.vs200Pct > 0 ? '+' : ''}${rg.vs200Pct} % vs media 200)</span>`], ['Colchón de efectivo', r.regime.cashFloorPct + '%']);
   $('risk').innerHTML = rows.map(([a,b]) => `<div><span>${a}</span><b>${b}</b></div>`).join('');
   const sec = { ...r.sectorWeightsPct, Efectivo: r.cashPct };
   secChart.data.labels = Object.keys(sec);
