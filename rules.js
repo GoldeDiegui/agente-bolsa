@@ -6,13 +6,12 @@ import { placeOrder, getSummary, getRisk, getOrders, addLimitOrder, cancelLimitO
 import { openMarkets, ENFORCE } from './hours.js';
 import { analyze, analysisText, rank, analysisCoverage, thesisLine, worstLine } from './analysis.js';
 import { fundamentalsStats, hasFinnhub } from './fundamentals.js';
+import { stopFor, takeProfitFor, sizeFactor, regimeGate, regimeText, regimeFor, cashFloorPct, BEAR_MIN_SCORE } from './volatility.js';
 
 const BY = 'agente (reglas)';
-const STOP_LOSS_PCT = -8;      // vende si la posición pierde más de un 8 %
-const TAKE_PROFIT_PCT = 15;    // vende la mitad si gana más de un 15 %
 const OVERWEIGHT_PCT = 25;     // recorta si un valor pesa más de un 25 %
 const TARGET_WEIGHT_PCT = 20;  // ...hasta dejarlo en un 20 %
-const CASH_FLOOR_PCT = 15;     // mantiene al menos un 15 % en efectivo
+const BASE_CASH_FLOOR_PCT = 15; // colchón de efectivo normal (sube a 20/25 % si el mercado se debilita)
 const ENTRY_PCT = 8;           // compra "base" ≈ 8 % del patrimonio (4,8 %-11,2 % según convicción)
 const MAX_BUYS_PER_REVIEW = 3;
 const MIN_CONFIDENCE = 0.5;    // el análisis debe cubrir al menos la mitad del modelo
@@ -43,6 +42,8 @@ const suspectSplit = (p) => { const r = p.price / p.avgCost; return r < 0.65 && 
 
 // Revisión autónoma: riesgo, tesis de las posiciones abiertas y compras con fundamento.
 export function autonomousReview() {
+  const CASH_FLOOR_PCT = cashFloorPct(BASE_CASH_FLOOR_PCT); // según el régimen del S&P 500
+  let regimeBlocked = 0; // candidatas descartadas por el filtro de mercado
   const actions = [];
   const sold = new Set();
   let suspectSkips = [];
@@ -56,13 +57,15 @@ export function autonomousReview() {
 
   // 1) Gestión de riesgo sobre lo que ya tengo
   for (const p of getSummary().positions) {
-    if (p.pnlPct <= STOP_LOSS_PCT) {
+    const { stopPct, atrPct } = stopFor(p.symbol), tp = takeProfitFor(p.symbol);
+    const stopWhy = atrPct != null ? `límite ${stopPct}% = 3,5 × volatilidad diaria ${atrPct}%` : `límite ${stopPct}%, sin datos de volatilidad`;
+    if (p.pnlPct <= stopPct) {
       if (p.pnlPct <= -30 && suspectSplit(p) && !eventsFresh(p.symbol)) { suspectSkips.push(p.symbol); continue; } // no vende por un posible split sin verificar
-      if (tryOrder({ symbol: p.symbol, side: 'sell', shares: p.shares, reason: `Stop-loss: pérdida de ${pct(p.pnlPct)} (límite ${STOP_LOSS_PCT}%)` },
-        `Vendo todo ${p.symbol} por stop-loss (${pct(p.pnlPct)}).`)) sold.add(p.symbol);
-    } else if (p.pnlPct >= TAKE_PROFIT_PCT && p.shares >= 2) {
+      if (tryOrder({ symbol: p.symbol, side: 'sell', shares: p.shares, reason: `Stop-loss: pérdida de ${pct(p.pnlPct)} (${stopWhy})` },
+        `Vendo todo ${p.symbol} por stop-loss (${pct(p.pnlPct)}; ${stopWhy}).`)) sold.add(p.symbol);
+    } else if (p.pnlPct >= tp && p.shares >= 2) {
       const n = Math.floor(p.shares / 2);
-      if (tryOrder({ symbol: p.symbol, side: 'sell', shares: n, reason: `Toma de beneficios: ganancia de ${pct(p.pnlPct)}` },
+      if (tryOrder({ symbol: p.symbol, side: 'sell', shares: n, reason: `Toma de beneficios: ganancia de ${pct(p.pnlPct)} (objetivo ${tp}%)` },
         `Vendo ${n} de ${p.symbol} para asegurar beneficios (${pct(p.pnlPct)}).`)) sold.add(p.symbol);
     }
   }
@@ -110,9 +113,12 @@ export function autonomousReview() {
     .map((q) => {
       const a = analyze(q.symbol);
       const trend = trendPct(q.symbol);
-      if (!ready) return { ...q, a: null, trend, pick: trend + q.changePct * 0.5 };
+      if (!ready) { const g = regimeGate(q.market, null); if (!g.ok) { regimeBlocked++; return null; } return { ...q, a: null, trend, mult: g.mult, pick: trend + q.changePct * 0.5 }; }
       const ok = a && a.verdict === 'Atractiva' && !a.eventRisk && a.confidence >= MIN_CONFIDENCE;
-      return ok ? { ...q, a, trend, pick: a.score + clamp(q.changePct, -3, 3) } : null;
+      if (!ok) return null;
+      const g = regimeGate(q.market, a.score);
+      if (!g.ok) { regimeBlocked++; return null; }
+      return { ...q, a, trend, mult: g.mult, pick: a.score + clamp(q.changePct, -3, 3) };
     })
     .filter((c) => c && (c.a || c.pick > -0.3));
 
@@ -123,7 +129,7 @@ export function autonomousReview() {
     const s = getSummary();
     const spendable = s.cash - (s.equity * CASH_FLOOR_PCT) / 100;
     const conviction = c.a ? clamp((c.a.score - 66) / 24, 0, 1) : 0.3;
-    const budget = Math.min((s.equity * ENTRY_PCT * (0.6 + 0.8 * conviction)) / 100, spendable);
+    const budget = Math.min((s.equity * ENTRY_PCT * (0.6 + 0.8 * conviction) * c.mult * sizeFactor(c.symbol)) / 100, spendable);
     const shares = Math.floor(budget / c.price);
     if (shares < 1) break;
     const why = c.a
@@ -152,6 +158,7 @@ export function autonomousReview() {
       .filter((q) => q.symbol !== 'SPY' && q.price != null && Date.now() - q.ts < FRESH_MS && !held[q.symbol] && canTrade(q.symbol) && Math.abs(q.changePct) < 10 && q.changePct > -5)
       .map((q) => ({ q, a: analyze(q.symbol) }))
       .filter(({ a }) => a && a.verdict === 'Atractiva' && !a.eventRisk && a.confidence >= MIN_CONFIDENCE)
+      .filter(({ q, a }) => { const ok = regimeGate(q.market, a.score).ok; if (!ok) regimeBlocked++; return ok; })
       .sort((x, y) => y.a.score - x.a.score);
     if (weak.length) rotationNote = ` Posición más débil: ${weak[0].p.symbol} ${weak[0].a.score}/100; solo se rota si una candidata la supera en ${ROTATION_GAP}+ puntos.`;
     let pair = null;
@@ -174,7 +181,7 @@ export function autonomousReview() {
         const s2 = getSummary();
         const room = s2.cash - (s2.equity * CASH_FLOOR_PCT) / 100;
         const conviction = clamp((c.a.score - 66) / 24, 0, 1);
-        const budget = Math.min((s2.equity * ENTRY_PCT * (0.6 + 0.8 * conviction)) / 100, room);
+        const budget = Math.min((s2.equity * ENTRY_PCT * (0.6 + 0.8 * conviction) * regimeGate(c.q.market, c.a.score).mult * sizeFactor(c.q.symbol)) / 100, room);
         const shares = Math.floor(budget / c.q.price);
         if (shares >= 1) tryOrder(
           { symbol: c.q.symbol, side: 'buy', shares, reason: `Rotación desde ${w.p.symbol} (${w.a.score}/100 → ${c.a.score}/100): ${thesisLine(c.a, 3)} · ${c.q.sector}` },
@@ -202,19 +209,23 @@ export function autonomousReview() {
     head = `Sin cambios: ningún valor cumple ahora los criterios (tesis atractiva, sin resultados inminentes y sin riesgo grave en titulares).` +
       (top.length ? ` Mejor puntuados: ${top.map((a) => `${a.symbol} ${a.score}/100 (${a.verdict})`).join(', ')}.` : '');
   }
-  return `${head} Patrimonio ${usd(s.equity)}, efectivo ${usd(s.cash)} (${((s.cash / s.equity) * 100).toFixed(1)}%). Análisis: ${cov.analyzed}/${cov.total} valores.`;
+  const rg = regimeFor('S&P 500');
+  const regimeNote = rg && rg.state !== 'alcista'
+    ? ` Filtro de mercado: ${regimeText('S&P 500')}; ${rg.state === 'bajista' ? `solo compro con tesis de ${BEAR_MIN_SCORE}+/100 y a medio tamaño` : 'compro a ¾ del tamaño'}, colchón de efectivo del ${CASH_FLOOR_PCT} %.${regimeBlocked ? ` ${regimeBlocked} candidata(s) descartada(s) por el filtro.` : ''}`
+    : '';
+  return `${head}${regimeNote} Patrimonio ${usd(s.equity)}, efectivo ${usd(s.cash)} (${((s.cash / s.equity) * 100).toFixed(1)}%). Análisis: ${cov.analyzed}/${cov.total} valores.`;
 }
 
 // ---------- Chat por palabras clave ----------
 const GLOSSARY = [
   [/(qu[eé] es|explica|significa|c[oó]mo funciona).*(orden(es)? l[ií]mite|limit order)/, 'Una orden límite es una orden que solo se ejecuta si el precio llega al nivel que tú fijas. Compra límite: se ejecuta cuando el precio baja hasta ese nivel (o menos). Venta límite: cuando sube hasta ese nivel (o más). Aquí: "compra 10 AAPL a 300" o "vende 5 MSFT a 600". Caducan a los 30 días.'],
-  [/stop.?loss/, 'Un stop-loss es una orden o regla para vender si el precio cae un porcentaje determinado y limitar así la pérdida. Este gestor lo aplica al -8 % por posición.'],
+  [/stop.?loss/, 'Un stop-loss es una orden o regla para vender si el precio cae un porcentaje determinado y limitar así la pérdida. Este gestor lo ajusta a la volatilidad de cada valor (3,5 veces su variación diaria típica, entre -6 % y -15 %; -8 % si aún no hay datos).'],
   [/diversific/, 'Diversificar es repartir el dinero entre distintos valores y sectores para que un mal resultado en uno no hunda toda la cartera. Reduce el riesgo específico, pero no elimina el riesgo de mercado.'],
   [/drawdown|ca[ií]da m[aá]xima/, 'El drawdown máximo es la mayor caída desde un máximo hasta un mínimo posterior. Mide cuánto "dolor" ha tenido que soportar la cartera.'],
   [/volatilidad/, 'La volatilidad mide cuánto fluctúan los precios. Más volatilidad implica más incertidumbre: puede dar más ganancias, pero también más pérdidas.'],
   [/\bper\b|p\/e/, 'El PER (price-to-earnings) es precio de la acción dividido entre el beneficio por acción. Un PER alto suele indicar que el mercado espera mucho crecimiento (o que está cara); compáralo siempre con empresas del mismo sector.'],
   [/\betf\b|fondo cotizado/, 'Un ETF es un fondo que cotiza en bolsa y replica un índice o una cesta de activos. SPY replica el S&P 500; aquí lo usamos como referencia para comparar.'],
-  [/dividendo/, 'Un dividendo es la parte del beneficio que una empresa reparte a sus accionistas. Esta simulación no incluye cobro de dividendos.'],
+  [/dividendo/, 'Un dividendo es la parte del beneficio que una empresa reparte a sus accionistas. Esta simulación los abona en efectivo al cobrarse (sin impuestos).'],
   [/hhi|concentraci/, 'El HHI mide la concentración: suma de los pesos al cuadrado. Cerca de 0 = muy repartida; cerca de 1 = todo en un solo valor.'],
   [/momentum|tendencia/, 'El momentum es la tendencia a que lo que sube siga subiendo a corto plazo (y lo contrario). Este gestor lo usa como criterio secundario al elegir qué comprar.'],
   [/\betf|bolsa|mercado de valores|acci[oó]n(es)?\b.*qu[eé]|qu[eé] es una acci/, 'Una acción es una parte del capital de una empresa; la bolsa es el mercado donde se compran y venden. El precio sube o baja según la oferta y la demanda.'],

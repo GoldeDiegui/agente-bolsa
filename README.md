@@ -126,3 +126,17 @@ En el detalle de cada valor aparece la tabla «Cuentas»: resultados (ingresos, 
 - **Trimestral · secuencial:** frente al trimestre anterior.
 - **Anual:** frente al año anterior.
 Los costes, pasivos y deuda se marcan en rojo al subir. Fuente: Yahoo Finance (S&P 500 e IBEX), sin registro; se descargan poco a poco (primero cartera y candidatos) y se renuevan cada 5 días (`YAHOO_STMT_PER_MIN`, 40 por defecto). Yahoo suele dar unos 4-5 trimestres y 4 años. En la nube se publican en `financials.json`; en local, el servidor los pide al abrir el valor (`/api/financials/:símbolo`).
+
+## Stop-loss por volatilidad y filtro de mercado
+
+**Stop-loss propio de cada valor.** En vez de un -8 % fijo, el stop es 3,5 veces la volatilidad diaria del valor (ATR de 14 sesiones, en % del precio), con suelo del -6 % y techo del -15 %. Un valor tranquilo (KO) sale antes; uno muy volátil (AMD) aguanta el ruido normal. Sin datos de volatilidad se usa el -8 % de siempre. La toma de beneficios (vende la mitad) es el doble del stop, mínimo +15 %. La web muestra el stop de cada posición (columna «Stop»).
+
+**Tamaño según volatilidad.** La compra base se multiplica por 2,5 / ATR del valor, entre 0,5 y 1,2: menos dinero en los valores más volátiles.
+
+**Filtro de mercado.** Se compara el S&P 500 (el IBEX 35 para sus valores) con sus medias de 50 y 200 sesiones:
+- *Alcista* (por encima de ambas): todo normal.
+- *Cautela* (por debajo de la de 50): compras a ¾ del tamaño y colchón de efectivo del 20 %.
+- *Bajista* (por debajo de la de 200): solo compra con tesis de 80+/100, a medio tamaño, y colchón del 25 %. Las rotaciones siguen la misma regla.
+El filtro nunca fuerza ventas: solo frena compras nuevas. Si no hay datos del índice, no se aplica. El estado aparece en el panel de riesgo y en el registro del gestor.
+
+Los datos salen del gráfico diario de Yahoo y se guardan en `vol.json` (rama `estado`); se renuevan cada 12 h (valores) y 4 h (índices). Parámetros en `volatility.js`.

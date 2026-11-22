@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getQuote, getAllQuotes, isValid, getHistory } from './market.js';
 import { tradeStatus } from './hours.js';
+import { stopFor, regimeSummary } from './volatility.js';
 
 export const INITIAL_CASH = 100000;
 const MAX_POSITION_PCT = 0.30; // límite de riesgo: máx. 30% del patrimonio en un valor
@@ -120,6 +121,7 @@ export function getSummary() {
       avgCost: +p.avgCost.toFixed(2), price: +price.toFixed(2),
       value: +value.toFixed(2), pnl: +pnl.toFixed(2),
       pnlPct: +((pnl / (p.shares * p.avgCost)) * 100).toFixed(2),
+      stopPct: stopFor(symbol).stopPct, atrPct: stopFor(symbol).atrPct,
     };
   });
   const invested = positions.reduce((s, p) => s + p.value, 0);
@@ -304,6 +306,7 @@ export function getRisk() {
     sectorWeightsPct: Object.fromEntries(Object.entries(bySector).map(([k, v]) => [k, +v.toFixed(2)])),
     vsSpyPct: +(pfRet - spyRet).toFixed(2),
     maxPositionLimitPct: MAX_POSITION_PCT * 100,
+    regime: regimeSummary(),
   };
 }
 

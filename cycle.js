@@ -8,6 +8,7 @@ import { refreshPrices, getAllQuotes, marketStats, UNIVERSE } from './market.js'
 import { getSummary, snapshot, getOrders, getEquityCurve, getRisk, getPending, checkPending, getWatchedSymbols, addAgentLog, getAgentLog, getEvents, flushState } from './portfolio.js';
 import { checkCorporateEvents } from './corporate.js';
 import { maybeSnapshot, evaluate, summary as scoreSummary } from './scorecard.js';
+import { refreshVolatility, refreshRegime, regimeSummary } from './volatility.js';
 import { runFundamentalsBudget, flushFundamentals, fundamentalsStats, hasFinnhub, exportStatements } from './fundamentals.js';
 import { analyze, brief, rank, shortlist, analysisCoverage } from './analysis.js';
 import { autonomousReview, agentEnabled, agentMode } from './agent.js';
@@ -46,6 +47,14 @@ try {
   const pr = await refreshPrices([...getWatchedSymbols(), ...worklist.getShortlist()],
     mode === 'trade' ? { batch: Number(process.env.PRICE_BATCH_TRADE || 120), budgetMs: 100000 } : { batch: Infinity, budgetMs: 200000 });
   log(`Precios: ${pr.requested}/${pr.total} pedidos · ${marketStats().loaded}/${marketStats().total} con precio`);
+
+  // 2b) Volatilidad de lo que tengo y de los candidatos (para el stop-loss y el tamaño) y régimen de mercado
+  {
+    await refreshRegime();
+    const v = await refreshVolatility([...getWatchedSymbols(), ...worklist.getShortlist()], { budgetMs: 40000 });
+    const rs = regimeSummary();
+    log(`Volatilidad: ${v.done} nuevas · mercado: ${Object.entries(rs.markets).map(([m, r]) => `${m} ${r.state}`).join(', ') || 'sin datos'}`);
+  }
 
   // 3) Splits y dividendos de lo que tengo (antes de decidir nada, para que los precios y las acciones cuadren)
   {
@@ -116,7 +125,7 @@ function exportSite() {
     updatedAt: now, mode, agentMode: agentMode(), agentEnabled: true,
     markets: Object.fromEntries(Object.keys(MARKETS).map((k) => [k, { open: marketClock(k, now).open, schedule: scheduleText(k) }])),
     quotes: getAllQuotes().filter((q) => q.price != null).map((q) => ({ symbol: q.symbol, name: q.name, sector: q.sector, market: q.market, currency: q.currency, price: q.price, priceNative: q.priceNative, changePct: q.changePct, source: q.source })),
-    market: marketStats(), analysis: analysisCoverage(), portfolio: s, risk: getRisk(),
+    market: marketStats(), analysis: analysisCoverage(), portfolio: s, risk: getRisk(), regime: regimeSummary(),
     orders: getOrders().slice(0, 300), events: getEvents().slice(0, 100), pending: getPending(),
     curve: curve.filter((_, i) => i % step === 0 || i === curve.length - 1),
     agentLog: getAgentLog(), scorecard: scoreSummary(), opportunities, analyses, data: fundamentalsStats(),

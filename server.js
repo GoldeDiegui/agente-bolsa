@@ -6,6 +6,7 @@ import { getSummary, snapshot, getOrders, getEquityCurve, getRisk, placeOrder, a
 import { chat, autonomousReview, agentEnabled, agentMode } from './agent.js';
 import { startFundamentals, flushFundamentals, fundamentalsStats, ensureStatements, STMT_FIELDS } from './fundamentals.js';
 import { checkCorporateEvents } from './corporate.js';
+import { refreshVolatility, refreshRegime } from './volatility.js';
 import { maybeSnapshot, evaluate, summary as scoreSummary } from './scorecard.js';
 import { analyze, analysisText, brief, rank, shortlist, analysisCoverage } from './analysis.js';
 
@@ -162,6 +163,13 @@ async function runEvents() {
     for (const e of applied) logDecision(`${e.type === 'split' ? 'Split' : 'Dividendo'} en ${e.symbol}: ${e.text}`);
   } catch (e) { console.warn('Revisión de splits/dividendos fallida:', e.message); }
 }
+// Volatilidad (stop-loss y tamaños) y régimen de mercado: cada 30 minutos
+async function runVol() {
+  try { await refreshRegime(); await refreshVolatility([...getWatchedSymbols(), ...shortlist(60).slice(0, 30)], { budgetMs: 60000 }); }
+  catch (e) { console.warn('Volatilidad fallida:', e.message); }
+}
+setTimeout(runVol, 15000);
+setInterval(runVol, 30 * 60 * 1000);
 // Marcador de aciertos: cohorte semanal y evaluación de resultados maduros (cada hora)
 async function runScorecard() {
   try { maybeSnapshot(); await evaluate({ budgetMs: 120000 }); } catch (e) { console.warn('Marcador fallido:', e.message); }
