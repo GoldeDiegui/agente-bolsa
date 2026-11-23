@@ -20,7 +20,7 @@ const MIN_COVERAGE = Number(process.env.MIN_COVERAGE ?? 0.35);
 const MAX_COHORTS = 52;
 const NEUTRAL_SAMPLE = 60;
 const VERDICTS = ['Atractiva', 'Neutral', 'Precaución', 'Cara', 'Evitar'];
-const COMPONENTS = ['valuation', 'growth', 'quality', 'analysts', 'earnings', 'revisions', 'momentum', 'insiders', 'sentiment'];
+const COMPONENTS = ['valuation', 'growth', 'quality', 'analysts', 'earnings', 'revisions', 'momentum', 'insiders', 'shorts', 'sentiment'];
 const DAY = 86400e3;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

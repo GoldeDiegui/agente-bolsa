@@ -402,14 +402,21 @@ export function normalizeYahooInsiders(r = {}) {
     }))
     .filter((t) => t.t && /purchase|sale|buy|sell/i.test(t.text)) // sin concesiones, ejercicios de opciones ni regalos
     .sort((a, b) => b.t - a.t).slice(0, 6);
-  if (!buys && !sells && !recent.length) return { none: true };
-  return { buys, sells, buyShares, sellShares, netPct: total > 0 ? +(((buyShares - sellShares) / total) * 100).toFixed(2) : null, period: n.period ?? '6m', recent };
+  const k = r.defaultKeyStatistics ?? {};
+  const frac = (key) => { const v = raw(k, key); return v == null ? null : +(v * 100).toFixed(2); };
+  const shortPrior = raw(k, 'sharesShortPriorMonth'), shortNow = raw(k, 'sharesShort');
+  const own = {
+    shortPct: frac('shortPercentOfFloat'), shortRatio: raw(k, 'shortRatio'),
+    shortChgPct: shortPrior > 0 && shortNow != null ? +(((shortNow / shortPrior) - 1) * 100).toFixed(1) : null,
+    instPct: frac('heldPercentInstitutions'), insidersPct: frac('heldPercentInsiders'), float: raw(k, 'floatShares'),
+  };
+  return { own, buys, sells, buyShares, sellShares, netPct: total > 0 ? +(((buyShares - sellShares) / total) * 100).toFixed(2) : null, period: n.period ?? '6m', recent };
 }
 async function fetchYahooInsiders(symbol) {
   return viaProvider('yahooIns', async () => {
     for (let attempt = 0; attempt < 2; attempt++) {
       const { cookie, crumb } = await yahooAuth();
-      const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=netSharePurchaseActivity,insiderTransactions&crumb=${encodeURIComponent(crumb)}`;
+      const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=netSharePurchaseActivity,insiderTransactions,defaultKeyStatistics&crumb=${encodeURIComponent(crumb)}`;
       try {
         const data = await http(url, { headers: { Cookie: cookie } });
         const r = data?.quoteSummary?.result?.[0];
@@ -425,6 +432,7 @@ async function fetchYahooInsiders(symbol) {
 const needsIns = (s, now, watched) => {
   if (BY.get(s)?.market !== 'S&P 500' || status.paused.yahoo > now) return false; // los Form 4 son de EE. UU.
   const e = cache.insiders[s];
+  if (e && !e.failedAt && e.own === undefined) return true; // entradas antiguas, sin posición corta ni propiedad
   return !e || now - (e.failedAt ?? e.fetchedAt) > (e.failedAt ? RETRY_TTL : watched ? INS_TTL_WATCH : INS_TTL);
 };
 async function refreshInsiders(s) {
@@ -437,7 +445,9 @@ async function refreshInsiders(s) {
   }
   markDirty();
 }
-export const getInsiders = (symbol) => { const e = cache.insiders[symbol]; return e?.fetchedAt && !e.none ? e : null; };
+export const getInsiders = (symbol) => { const e = cache.insiders[symbol]; return e?.fetchedAt && (e.buys || e.sells || e.recent?.length) ? e : null; };
+// Posición corta y propiedad (del mismo módulo de Yahoo)
+export const getOwnership = (symbol) => { const o = cache.insiders[symbol]?.own; return o && (o.shortPct != null || o.instPct != null) ? o : null; };
 
 // ---------- API pública ----------
 export const providerFor = (symbol) => (BY.get(symbol)?.market === 'S&P 500' && FINNHUB_KEY ? 'finnhub' : 'yahoo');

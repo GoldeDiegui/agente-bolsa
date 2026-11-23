@@ -162,3 +162,7 @@ Nuevo componente **Directivos** del análisis (peso ≈ 5 %), solo para el S&P 5
 - En el detalle de cada valor aparecen las últimas operaciones (fecha, quién, cargo, acciones e importe). Se filtran concesiones, ejercicios de opciones y regalos.
 - Descarga: cartera y candidatos cada 24 h; el resto del S&P 500 cada 3 días (`YAHOO_INS_PER_MIN`, 30 por defecto). Se guarda en `fundamentals.json`.
 Los pesos se normalizan en `analysis.js` (`W_RAW`). El marcador de aciertos mide Directivos por separado.
+
+## Posición corta y propiedad
+
+Nuevo componente **Posición corta** (peso ≈ 3 %), solo S&P 500: porcentaje de las acciones en circulación vendidas en corto (por tramos: ≤2 % neutro-favorable, ≥10 % negativo, ≥20 % muy negativo), con el cambio frente al mes anterior y los días necesarios para cubrirla. Avisa de posible *short squeeze* si es muy alta y difícil de cubrir. Además se muestra la propiedad (instituciones y directivos, % de las acciones) como dato informativo, sin puntuar. Se descarga en la misma petición de Yahoo que las operaciones de directivos (sin coste extra de peticiones) y se guarda en `fundamentals.json`.

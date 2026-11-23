@@ -1,7 +1,7 @@
 // Motor de análisis: valoración relativa al sector, crecimiento, calidad, analistas, resultados y catalizadores.
 // Es un modelo de reglas transparente (cada punto se explica); NO predice precios ni es asesoramiento financiero.
 import { UNIVERSE, getQuote } from './market.js';
-import { getFundamentals, getNews, getEstimates, getNextEarnings, getInsiders, fundamentalsStats } from './fundamentals.js';
+import { getFundamentals, getNews, getEstimates, getNextEarnings, getInsiders, getOwnership, fundamentalsStats } from './fundamentals.js';
 import { getTech } from './technicals.js';
 
 const BY = new Map(UNIVERSE.map((u) => [u.symbol, u]));
@@ -287,9 +287,22 @@ export function insiderScore(ins) {
   return { score: clamp(s, 20, 92), reasons: [{ type, text, short: buys ? `${buys} compras de directivos` : `${sells} ventas de directivos` }] };
 }
 
+
+// Posición corta (porcentaje de acciones vendidas en corto) y propiedad. Mucha posición corta suele anticipar peor rendimiento y movimientos bruscos.
+export function shortScore(o) {
+  if (!o || o.shortPct == null) return { score: null, reasons: [] };
+  const parts = [{ s: lin(o.shortPct, [[0, 60], [2, 58], [5, 50], [10, 35], [20, 18], [30, 10]]), w: 0.8 }];
+  if (o.shortChgPct != null) parts.push({ s: lin(o.shortChgPct, [[-30, 70], [0, 50], [30, 30]]), w: 0.2 });
+  const days = o.shortRatio != null ? `, ${fmt(o.shortRatio, 1)} días para cubrirla` : '';
+  const chg = o.shortChgPct != null ? ` (${sgn(o.shortChgPct, 0)} % en el último mes)` : '';
+  const reasons = [{ type: o.shortPct >= 10 ? 'neg' : 'info', text: `Posición corta del ${fmt(o.shortPct, 1)} % de las acciones en circulación${days}${chg}${o.shortPct >= 10 ? ': el mercado apuesta en contra' : ''}`, short: `posición corta ${fmt(o.shortPct, 0)} %` }];
+  if (o.shortPct >= 20 && (o.shortRatio ?? 0) >= 5) reasons.push({ type: 'info', text: 'Posición corta muy alta y difícil de cubrir: riesgo de movimientos bruscos en ambos sentidos (short squeeze)' });
+  return { score: wavg(parts), reasons };
+}
+
 // ---------- análisis completo ----------
 // Pesos relativos (se normalizan a 1): fundamentales ≈ 70 %, momentum ≈ 10 %, directivos ≈ 5 %, resto de señales de mercado
-const W_RAW = { valuation: 27, growth: 22, quality: 18, analysts: 8, earnings: 8, revisions: 12, sentiment: 5, momentum: 12, insiders: 6 };
+const W_RAW = { valuation: 27, growth: 22, quality: 18, analysts: 8, earnings: 8, revisions: 12, sentiment: 5, momentum: 12, insiders: 6, shorts: 4 };
 const W_SUM = Object.values(W_RAW).reduce((a, b) => a + b, 0);
 const WEIGHTS = Object.fromEntries(Object.entries(W_RAW).map(([k, v]) => [k, v / W_SUM]));
 const memo = new Map();
@@ -298,11 +311,11 @@ export function analyze(symbol) {
   const u = BY.get(symbol);
   if (!u) return null;
   // se reutiliza el resultado solo si no han llegado datos nuevos (fundamentales o noticias) y es reciente
-  const f = getFundamentals(symbol), n = getNews(symbol), e = getEstimates(symbol), tk = getTech(symbol)?.fetchedAt ?? null, ih = getInsiders(symbol);
+  const f = getFundamentals(symbol), n = getNews(symbol), e = getEstimates(symbol), tk = getTech(symbol)?.fetchedAt ?? null, ih = getInsiders(symbol), ow = getOwnership(symbol);
   const hit = memo.get(symbol);
-  if (hit && hit.f === f && hit.n === n && hit.e === e && hit.tk === tk && hit.ih === ih && Date.now() - hit.t < 60e3) return hit.a;
+  if (hit && hit.f === f && hit.n === n && hit.e === e && hit.tk === tk && hit.ih === ih && hit.ow === ow && Date.now() - hit.t < 60e3) return hit.a;
   const a = compute(u);
-  memo.set(symbol, { t: Date.now(), a, f, n, e, tk, ih });
+  memo.set(symbol, { t: Date.now(), a, f, n, e, tk, ih, ow });
   return a;
 }
 
@@ -318,8 +331,10 @@ function compute(u) {
   const rev = revisionsScore(getEstimates(u.symbol));
   const mom = momentumScore(getTech(u.symbol), q?.priceNative);
   const insd = getInsiders(u.symbol), ins = insiderScore(insd);
-  const scores = { valuation: val.score, growth: gro.score, quality: qua.score, analysts: ana.score, earnings: ear.score, revisions: rev.score, sentiment: news?.score ?? null, momentum: mom.score, insiders: ins.score };
-  reasons.push(...val.reasons, ...gro.reasons, ...qua.reasons, ...ana.reasons, ...ear.reasons, ...rev.reasons, ...mom.reasons, ...ins.reasons);
+  const own = getOwnership(u.symbol), sht = shortScore(own);
+  const scores = { valuation: val.score, growth: gro.score, quality: qua.score, analysts: ana.score, earnings: ear.score, revisions: rev.score, sentiment: news?.score ?? null, momentum: mom.score, insiders: ins.score, shorts: sht.score };
+  reasons.push(...val.reasons, ...gro.reasons, ...qua.reasons, ...ana.reasons, ...ear.reasons, ...rev.reasons, ...mom.reasons, ...ins.reasons, ...sht.reasons);
+  if (own && (own.instPct != null || own.insidersPct != null)) reasons.push({ type: 'info', text: `Propiedad: ${own.instPct != null ? `instituciones ${fmt(own.instPct, 0)} %` : ''}${own.instPct != null && own.insidersPct != null ? ' · ' : ''}${own.insidersPct != null ? `directivos ${fmt(own.insidersPct, 1)} %` : ''} de las acciones` });
 
   if (m.high52 && q?.priceNative) {
     const off = (q.priceNative / m.high52 - 1) * 100;
@@ -396,7 +411,7 @@ export function analysisText(a) {
   const s = a.scores, p = (k, n) => (s[k] == null ? null : `${n} ${s[k]}`);
   const lines = [
     `${head} — Veredicto: ${a.verdict.toUpperCase()} · puntuación ${a.score}/100 (cobertura de datos ${Math.round(a.confidence * 100)} %)`,
-    [p('valuation', 'Valoración'), p('growth', 'Crecimiento'), p('quality', 'Calidad'), p('analysts', 'Analistas'), p('earnings', 'Resultados'), p('revisions', 'Revisiones'), p('momentum', 'Momentum'), p('insiders', 'Directivos'), p('sentiment', 'Noticias')].filter(Boolean).join(' · '),
+    [p('valuation', 'Valoración'), p('growth', 'Crecimiento'), p('quality', 'Calidad'), p('analysts', 'Analistas'), p('earnings', 'Resultados'), p('revisions', 'Revisiones'), p('momentum', 'Momentum'), p('insiders', 'Directivos'), p('shorts', 'Posición corta'), p('sentiment', 'Noticias')].filter(Boolean).join(' · '),
     ...a.reasons.slice(0, 9).map((r) => `${ICON[r.type]} ${r.text}`),
   ];
   if (a.catalysts.length) lines.push('Catalizadores:', ...a.catalysts.slice(0, 5).map((c) => `• [${c.tag}] ${c.text}`));
