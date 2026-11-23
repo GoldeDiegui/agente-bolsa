@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { UNIVERSE } from './market.js';
+import { stressInfo } from './macro.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FILE = process.env.VOL_FILE
@@ -139,16 +140,20 @@ export const regimeText = (market) => { const r = regimeFor(market); return r ? 
 
 // Reglas según el régimen del mercado del valor: en el bajista solo compra con convicción alta y a medio tamaño.
 export const BEAR_MIN_SCORE = 80;
+// Además, una tensión alta en el mercado (VIX ≥ 25: elevada, ≥ 30: alta) reduce el tamaño aunque la tendencia sea alcista.
 export function regimeGate(market, score) {
-  const r = regimeFor(market);
-  if (!r || r.state === 'alcista') return { ok: true, mult: 1, state: r?.state ?? null };
-  if (r.state === 'cautela') return { ok: true, mult: 0.75, state: 'cautela' };
-  return { ok: score != null && score >= BEAR_MIN_SCORE, mult: 0.5, state: 'bajista' };
+  const r = regimeFor(market), st = stressInfo()?.level;
+  const stressMult = st === 'alta' ? 0.6 : st === 'elevada' ? 0.75 : 1;
+  if (r?.state === 'bajista') return { ok: score != null && score >= BEAR_MIN_SCORE, mult: +(0.5 * (st === 'alta' ? 0.8 : 1)).toFixed(2), state: 'bajista' };
+  const mult = Math.min(r?.state === 'cautela' ? 0.75 : 1, stressMult);
+  return { ok: true, mult, state: mult < 1 ? 'cautela' : r?.state ?? null };
 }
 // Colchón de efectivo: 15 % normal, 20 % en cautela, 25 % en mercado bajista (según el S&P 500, que pesa más en la cartera)
 export function cashFloorPct(base = 15) {
-  const s = regimeFor('S&P 500')?.state;
-  return s === 'bajista' ? Math.max(base, 25) : s === 'cautela' ? Math.max(base, 20) : base;
+  const s = regimeFor('S&P 500')?.state, st = stressInfo()?.level;
+  const byTrend = s === 'bajista' ? 25 : s === 'cautela' ? 20 : base;
+  const byStress = st === 'alta' ? 25 : st === 'elevada' ? 20 : base;
+  return Math.max(base, byTrend, byStress);
 }
 export const regimeSummary = () => ({
   markets: Object.fromEntries(Object.entries(cache.regime).filter(([, r]) => r?.state).map(([m, r]) => [m, { state: r.state, vs200Pct: r.vs200Pct, t: r.t }])),

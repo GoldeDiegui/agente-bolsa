@@ -166,3 +166,9 @@ Los pesos se normalizan en `analysis.js` (`W_RAW`). El marcador de aciertos mide
 ## Posición corta y propiedad
 
 Nuevo componente **Posición corta** (peso ≈ 3 %), solo S&P 500: porcentaje de las acciones en circulación vendidas en corto (por tramos: ≤2 % neutro-favorable, ≥10 % negativo, ≥20 % muy negativo), con el cambio frente al mes anterior y los días necesarios para cubrirla. Avisa de posible *short squeeze* si es muy alta y difícil de cubrir. Además se muestra la propiedad (instituciones y directivos, % de las acciones) como dato informativo, sin puntuar. Se descarga en la misma petición de Yahoo que las operaciones de directivos (sin coste extra de peticiones) y se guarda en `fundamentals.json`.
+
+## Contexto macro (`macro.js`)
+
+Tarjeta «Contexto macro» en la web con el VIX (miedo del mercado), el bono de EE. UU. a 10 años, la letra a 3 meses, la curva 10 años − 3 meses, el índice dólar, el petróleo WTI y el oro, con su variación del día y del mes y avisos en lenguaje claro (curva invertida, subida rápida de tipos, dólar fuerte, petróleo disparado). Datos del gráfico diario de Yahoo, sin clave; se renuevan cada 30 min y se guardan en `macro.json`.
+
+**Cómo lo usa el gestor:** solo el VIX actúa sobre las órdenes. VIX ≥ 25 («tensión elevada»): compras a ¾ del tamaño y colchón de efectivo del 20 %. VIX ≥ 30 («alta»): compras al 60 % y colchón del 25 %. Se combina con la tendencia del S&P 500 (se aplica lo más prudente). El resto de indicadores es informativo por ahora. Si no hay datos del VIX, no se aplica nada. El resumen del día y el registro del gestor mencionan la tensión cuando existe.

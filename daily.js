@@ -2,6 +2,7 @@
 import { getSummary, getOrders, getEquityCurve, getEvents, getAgentLog } from './portfolio.js';
 import { getQuote } from './market.js';
 import { regimeText, regimeFor } from './volatility.js';
+import { stressInfo } from './macro.js';
 
 const TZ = 'Europe/Madrid';
 const dayKey = (t) => new Date(t).toLocaleDateString('en-CA', { timeZone: TZ }); // AAAA-MM-DD en hora de Madrid
@@ -51,6 +52,8 @@ export function dailySummary(now = Date.now()) {
   if (best && best.impact > 0) parts.push(`Más aportó ${best.symbol} (${fmtPct(best.changePct)}).`);
   if (worst && worst.impact < 0) parts.push(`Más restó ${worst.symbol} (${fmtPct(worst.changePct)}).`);
   if (reg) parts.push(`Mercado: ${regimeText('S&P 500')}.`);
+  const st = stressInfo();
+  if (st && st.level !== 'normal') parts.push(`${st.text}.`);
 
   const lastLog = getAgentLog().find((l) => dayKey(l.t) === day);
   return {

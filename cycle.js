@@ -8,6 +8,7 @@ import { refreshPrices, getAllQuotes, marketStats, UNIVERSE } from './market.js'
 import { getSummary, snapshot, getOrders, getEquityCurve, getRisk, getPending, checkPending, getWatchedSymbols, addAgentLog, getAgentLog, getEvents, flushState } from './portfolio.js';
 import { checkCorporateEvents } from './corporate.js';
 import { maybeSnapshot, evaluate, summary as scoreSummary } from './scorecard.js';
+import { refreshMacro, macroSummary } from './macro.js';
 import { refreshTech, exportCharts, techCount } from './technicals.js';
 import { dailySummary } from './daily.js';
 import { refreshVolatility, refreshRegime, regimeSummary } from './volatility.js';
@@ -53,6 +54,7 @@ try {
   // 2b) Volatilidad de lo que tengo y de los candidatos (para el stop-loss y el tamaño) y régimen de mercado
   {
     await refreshRegime();
+    await refreshMacro();
     const v = await refreshVolatility([...getWatchedSymbols(), ...worklist.getShortlist()], { budgetMs: 40000 });
     const rs = regimeSummary();
     log(`Volatilidad: ${v.done} nuevas · mercado: ${Object.entries(rs.markets).map(([m, r]) => `${m} ${r.state}`).join(', ') || 'sin datos'}`);
@@ -135,7 +137,7 @@ function exportSite() {
     updatedAt: now, mode, agentMode: agentMode(), agentEnabled: true,
     markets: Object.fromEntries(Object.keys(MARKETS).map((k) => [k, { open: marketClock(k, now).open, schedule: scheduleText(k) }])),
     quotes: getAllQuotes().filter((q) => q.price != null).map((q) => ({ symbol: q.symbol, name: q.name, sector: q.sector, market: q.market, currency: q.currency, price: q.price, priceNative: q.priceNative, changePct: q.changePct, source: q.source })),
-    market: marketStats(), analysis: analysisCoverage(), portfolio: s, risk: getRisk(), regime: regimeSummary(), daily: dailySummary(),
+    market: marketStats(), analysis: analysisCoverage(), portfolio: s, risk: getRisk(), regime: regimeSummary(), macro: macroSummary(), daily: dailySummary(),
     orders: getOrders().slice(0, 300), events: getEvents().slice(0, 100), pending: getPending(),
     curve: curve.filter((_, i) => i % step === 0 || i === curve.length - 1),
     agentLog: getAgentLog(), scorecard: scoreSummary(), opportunities, analyses, data: fundamentalsStats(),

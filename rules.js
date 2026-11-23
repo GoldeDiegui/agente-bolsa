@@ -6,6 +6,7 @@ import { placeOrder, getSummary, getRisk, getOrders, addLimitOrder, cancelLimitO
 import { openMarkets, ENFORCE } from './hours.js';
 import { analyze, analysisText, rank, analysisCoverage, thesisLine, worstLine } from './analysis.js';
 import { fundamentalsStats, hasFinnhub } from './fundamentals.js';
+import { stressInfo } from './macro.js';
 import { stopFor, takeProfitFor, sizeFactor, regimeGate, regimeText, regimeFor, cashFloorPct, BEAR_MIN_SCORE } from './volatility.js';
 
 const BY = 'agente (reglas)';
@@ -210,8 +211,10 @@ export function autonomousReview() {
       (top.length ? ` Mejor puntuados: ${top.map((a) => `${a.symbol} ${a.score}/100 (${a.verdict})`).join(', ')}.` : '');
   }
   const rg = regimeFor('S&P 500');
-  const regimeNote = rg && rg.state !== 'alcista'
-    ? ` Filtro de mercado: ${regimeText('S&P 500')}; ${rg.state === 'bajista' ? `solo compro con tesis de ${BEAR_MIN_SCORE}+/100 y a medio tamaño` : 'compro a ¾ del tamaño'}, colchón de efectivo del ${CASH_FLOOR_PCT} %.${regimeBlocked ? ` ${regimeBlocked} candidata(s) descartada(s) por el filtro.` : ''}`
+  const st = stressInfo();
+  const stressed = st && st.level !== 'normal';
+  const regimeNote = (rg && rg.state !== 'alcista') || stressed
+    ? ` Filtro de mercado: ${[rg && rg.state !== 'alcista' ? regimeText('S&P 500') : null, stressed ? st.text : null].filter(Boolean).join('; ')}; ${rg?.state === 'bajista' ? `solo compro con tesis de ${BEAR_MIN_SCORE}+/100 y a medio tamaño` : 'compro con tamaño reducido'}, colchón de efectivo del ${CASH_FLOOR_PCT} %.${regimeBlocked ? ` ${regimeBlocked} candidata(s) descartada(s) por el filtro.` : ''}`
     : '';
   return `${head}${regimeNote} Patrimonio ${usd(s.equity)}, efectivo ${usd(s.cash)} (${((s.cash / s.equity) * 100).toFixed(1)}%). Análisis: ${cov.analyzed}/${cov.total} valores.`;
 }
