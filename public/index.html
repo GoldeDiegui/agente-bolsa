@@ -91,6 +91,11 @@
     <div id="daily"></div>
   </section>
 
+  <section class="card c12" id="macroCard" style="display:none">
+    <h2>Contexto macro <span id="macroStress" style="text-transform:none;letter-spacing:0"></span></h2>
+    <div id="macro"></div>
+  </section>
+
   <section class="card c8">
     <h2>Evolución del patrimonio vs S&amp;P 500</h2>
     <div class="chartbox"><canvas id="eqChart"></canvas></div>
@@ -361,6 +366,27 @@ async function loadPrice(sym) {
   } catch { if ($('pbox')) $('pbox').innerHTML = '<p style="color:var(--mut);font-size:12px">No se pudo cargar el gráfico ahora mismo.</p>'; }
 }
 
+
+// ---------- Contexto macro ----------
+function renderMacro(m) {
+  const card = $('macroCard');
+  if (!m || !m.indicators?.length) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  const es = (v, d = 2) => Number(v).toLocaleString('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d });
+  const sg = (v, d, unit) => `${v > 0 ? '+' : ''}${es(v, d)}${unit}`;
+  const st = m.stress;
+  $('macroStress').innerHTML = st ? `· <span class="${st.level === 'normal' ? 'up' : 'down'}">tensión ${st.level}</span>` : '';
+  const tile = (label, val, d1, d1m) => `<div style="min-width:150px"><div style="color:var(--mut);font-size:11px">${label}</div><b style="font-size:17px">${val}</b>${d1 ? `<div style="font-size:11px">hoy <span class="${cls(d1[0])}">${d1[1]}</span> · 1 mes <span class="${cls(d1m[0])}">${d1m[1]}</span></div>` : ''}</div>`;
+  const tiles = m.indicators.map(i => i.kind === 'rate'
+    ? tile(i.label, es(i.last, 2) + ' %', [i.chg1d, sg(i.chg1d, 2, ' pp')], [i.chg1m, sg(i.chg1m, 2, ' pp')])
+    : tile(i.label, es(i.last, i.dec), [i.key === 'vix' ? -i.chg1d : i.chg1d, sg(i.chg1d, 1, ' %')], [i.key === 'vix' ? -i.chg1m : i.chg1m, sg(i.chg1m, 1, ' %')])); // en el VIX, subir es malo (rojo)
+  if (m.curve != null) tiles.push(tile('Curva 10 años − 3 meses', `<span class="${m.curve < 0 ? 'down' : ''}">${es(m.curve, 2)} pp</span>`));
+  $('macro').innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:10px 26px">${tiles.join('')}</div>` +
+    (m.notes?.length ? `<ul class="rs" style="margin-top:8px;font-size:12px">${m.notes.map(n => `<li class="info">${esc(n)}</li>`).join('')}</ul>` : '') +
+    `<div style="color:var(--mut);font-size:11px;margin-top:6px">Datos de Yahoo Finance (pueden llevar retraso). El VIX alto (25+) reduce el tamaño de las compras y sube el colchón de efectivo.</div>`;
+}
+async function loadMacro() { try { renderMacro(await (await fetch('/api/macro')).json()); } catch { /* se reintenta */ } }
+
 let ALL_AN = null; // análisis de todo el universo (se descarga solo cuando hace falta)
 async function openDetail(symbol) {
   $('sheet').innerHTML = '<div style="color:var(--mut)">Cargando análisis…</div>'; $('modal').classList.add('open');
@@ -539,7 +565,7 @@ async function loadStatic() {
     eqChart.data.labels = []; eqChart.data.datasets.forEach(d => d.data = []);
     s.curve.forEach(addPoint); eqChart.update();
     renderPortfolio(s.portfolio); renderRisk(s.risk, s.portfolio); renderMarket(s.quotes, s.market);
-    renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); renderScore(s.scorecard); renderBanner(s); renderDaily(s.daily);
+    renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); renderScore(s.scorecard); renderBanner(s); renderDaily(s.daily); renderMacro(s.macro);
     $('live').textContent = '● publicado ' + ago(s.updatedAt); $('live').className = (Date.now() - s.updatedAt < 3 * 3600e3 ? 'up' : 'down');
   };
   await refresh();
@@ -552,7 +578,7 @@ async function load() {
   initCharts();
   s.curve.forEach(addPoint); eqChart.update();
   renderPortfolio(s.portfolio); renderRisk(s.risk, s.portfolio); renderMarket(s.quotes, s.market);
-  renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); setInterval(loadOpps, 30000); loadDaily(); setInterval(loadDaily, 60000); loadScore(); setInterval(loadScore, 600000);
+  renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); setInterval(loadOpps, 30000); loadDaily(); setInterval(loadDaily, 60000); loadMacro(); setInterval(loadMacro, 120000); loadScore(); setInterval(loadScore, 600000);
   if (s.agentMode === 'reglas') addMsg('Modo gratuito: soy un gestor basado en reglas (stop-loss -8%, toma de beneficios +15%, máx. 25% por valor, 15% de efectivo mínimo). Decido con análisis fundamental (valoración frente al sector, crecimiento, calidad, analistas, resultados y noticias). Prueba "oportunidades", "analiza apple", "¿está cara nvidia?", "por qué compraste X", "revisa la cartera" o "estado de los datos". Revisión automática cada 5 minutos.', 'a');
 
   const es = new EventSource('/api/stream');
