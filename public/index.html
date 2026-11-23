@@ -414,7 +414,7 @@ async function openDetail(symbol) {
       '<div id="fin"><h4>Cuentas</h4><p style="color:var(--mut);font-size:12px">Cargando…</p></div>' +
       (a.insiders?.recent?.length ? `<h4>Operaciones de directivos (últimos meses)</h4><ul class="rs">${a.insiders.recent.map(t => `<li class="info">${new Date(t.t).toLocaleDateString('es-ES')} · ${esc(t.name)}${t.role ? ' (' + esc(t.role) + ')' : ''}: ${esc(t.text)}${t.shares ? ', ' + Number(t.shares).toLocaleString('es-ES') + ' acciones' : ''}${t.value ? ' ≈ ' + usd(t.value) : ''}</li>`).join('')}</ul>` : '') +
       (a.catalysts?.length ? `<h4>Catalizadores y eventos</h4><ul class="rs">${a.catalysts.map(c => `<li class="info">${esc(c.text)}</li>`).join('')}</ul>` : '') +
-      (a.headlines?.length ? `<h4>Titulares recientes</h4><ul class="rs">${a.headlines.map(h => `<li class="info">${esc(h.headline)} <small style="color:var(--mut)">${esc(h.source ?? '')}</small></li>`).join('')}</ul>` : '') +
+      (a.headlines?.length ? `<h4>Titulares recientes</h4><ul class="rs">${a.headlines.map(h => `<li class="info">${/^https?:\/\//.test(h.url ?? '') ? `<a href="${esc(h.url)}" target="_blank" rel="noopener noreferrer">${esc(h.headline)}</a>` : esc(h.headline)} <small style="color:var(--mut)">${esc(h.source ?? '')}${h.t ? ' · ' + new Date(h.t).toLocaleDateString('es-ES') : ''}${h.n > 1 ? ' · ' + h.n + ' medios' : ''}</small></li>`).join('')}</ul>` : '') +
       `<p style="color:var(--mut);font-size:11px;margin-top:14px">Modelo orientativo basado en reglas y datos públicos (medianas del sector calculadas con el propio universo). No predice el futuro ni es asesoramiento financiero.</p>`;
     $('xbtn').onclick = closeDetail;
     loadFin(symbol); loadPrice(symbol);
