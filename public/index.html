@@ -468,6 +468,7 @@ function renderRisk(r, pf) {
     ['Efectivo', r.cashPct + '%'], ['Concentración (HHI)', r.concentrationHHI],
     ['Vs S&P 500', pct(r.vsSpyPct)], ['Límite por valor', r.maxPositionLimitPct + '%'],
   ];
+  if (r.costs) rows.push(['Costes acumulados', `<span title="Comisiones ${usd(r.costs.commissions)} · deslizamiento ${usd(r.costs.slippage)} · divisa ${usd(r.costs.fx)} · impuestos ${usd(r.costs.taxes)} · retención de dividendos ${usd(r.costs.dividendTax)}">${usd(r.costs.total)} (${String(r.costs.pctOfCapital).replace('.', ',')} %)</span>`]);
   const rg = r.regime?.markets?.['S&P 500'];
   if (rg) rows.push(['Mercado (S&P 500)', `<span class="${rg.state === 'alcista' ? 'up' : rg.state === 'bajista' ? 'down' : ''}" title="Posición del índice frente a sus medias de 50 y 200 sesiones. Alcista: compra normal · cautela: compra a ¾ y efectivo 20 % · bajista: solo tesis de 80+ a medio tamaño y efectivo 25 %">${rg.state} (${rg.vs200Pct > 0 ? '+' : ''}${rg.vs200Pct} % vs media 200)</span>`], ['Colchón de efectivo', r.regime.cashFloorPct + '%']);
   $('risk').innerHTML = rows.map(([a,b]) => `<div><span>${a}</span><b>${b}</b></div>`).join('');
@@ -509,7 +510,7 @@ function renderOrders(list, events) {
   if (list) lastOrders = list;
   if (events) lastEvents = events;
   const rows = [
-    ...lastOrders.map(o => ({ t:o.t, html:`<td class="${o.side==='buy'?'up':'down'}">${o.side==='buy'?'COMPRA':'VENTA'}</td><td><b class="sym" data-sym="${esc(o.symbol)}">${esc(o.symbol)}</b></td><td class="r">${o.shares}</td><td class="r">${usd(o.price)}</td><td class="r">${usd(o.total)}</td><td>${esc(o.by)}</td><td>${esc(o.reason)}</td>` })),
+    ...lastOrders.map(o => ({ t:o.t, html:`<td class="${o.side==='buy'?'up':'down'}">${o.side==='buy'?'COMPRA':'VENTA'}</td><td><b class="sym" data-sym="${esc(o.symbol)}">${esc(o.symbol)}</b></td><td class="r">${o.shares}</td><td class="r" title="${o.refPrice != null ? 'Precio de mercado ' + usd(o.refPrice) + ' · deslizamiento ' + (o.slipBps ?? 0) + ' pb · comisión ' + usd(o.fee) + (o.fxCost ? ' · divisa ' + usd(o.fxCost) : '') + (o.tax ? ' · impuesto ' + usd(o.tax) : '') : ''}">${usd(o.price)}</td><td class="r">${usd(o.total)}</td><td>${esc(o.by)}</td><td>${esc(o.reason)}</td>` })),
     ...lastEvents.map(e => ({ t:e.t, html:`<td style="color:var(--acc)">${e.type==='split'?'SPLIT':'DIVIDENDO'}</td><td><b class="sym" data-sym="${esc(e.symbol)}">${esc(e.symbol)}</b></td><td class="r">${e.shares ? (e.shares > 0 ? '+' : '') + e.shares : ''}</td><td class="r"></td><td class="r ${e.type==='dividend'?'up':''}">${e.total ? usd(e.total) : ''}</td><td>sistema</td><td>${esc(e.text)}</td>` })),
   ].sort((a, b) => b.t - a.t);
   $('ord').innerHTML = '<tr><th>Fecha y hora</th><th>Op.</th><th>Valor</th><th class="r">Acc.</th><th class="r">Precio</th><th class="r">Total</th><th>Por</th><th>Motivo</th></tr>' +
