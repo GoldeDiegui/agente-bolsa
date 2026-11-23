@@ -183,3 +183,16 @@ Para la cartera y los candidatos, las noticias vienen ahora de tres sitios y se 
 - **Peso por fuente:** Reuters, Bloomberg, WSJ, FT, CNBC, SEC, Expansión… ×1; medios intermedios ×0,8; Motley Fool, Seeking Alpha, Zacks, MarketBeat… ×0,5; titulares de «clickbait» («3 reasons to buy…») ×0,5 adicional. Las noticias de poco peso no cuentan como positivas/negativas ni como riesgo grave.
 - En el detalle de cada valor, los titulares son enlaces con fecha, medio y número de medios que lo cuentan.
 Límites: Google 20/min, SEC 60/min (`GOOGLE_NEWS_PER_MIN`, `SEC_PER_MIN`; `SEC_USER_AGENT` para identificarte ante la SEC). Si una fuente extra falla, se sigue con las demás.
+
+## Costes de operar realistas (`costs.js`)
+
+Cada orden ahora paga lo que costaría de verdad (antes: 1 US$ fijo y precio exacto de mercado):
+- **Diferencial y deslizamiento:** el precio de ejecución es peor que el de mercado (compras más caras, ventas más baratas) según la liquidez del valor, calculada con su volumen diario medio de 30 sesiones: de 2 puntos básicos en los gigantes a 30 en los poco negociados (10 si no hay datos), más un impacto que crece con el tamaño de la orden y la volatilidad del valor. Tope: 100 pb. Las órdenes límite se ejecutan al precio del límite o mejor, sin deslizamiento.
+- **Comisión:** EE. UU. 0,005 US$/acción (mín. 1 US$, máx. 1 %); IBEX 0,10 % (mín. 2 US$).
+- **Divisa (IBEX):** 0,15 % en cada operación.
+- **Impuesto sobre transacciones financieras (España):** 0,2 % en las compras de acciones españolas.
+- **Liquidez:** una orden no puede superar el 5 % del volumen diario medio; si lo supera se ejecuta solo lo que el volumen permite.
+- **Dividendos:** se abonan netos de la retención en origen (15 % EE. UU., 19 % España); es una simplificación (no se modela la tributación final en tu IRPF).
+- El coste medio de cada posición incluye los costes de compra, así que el P&L y el stop-loss ya van «netos».
+- La web muestra en el panel de riesgo los **costes acumulados** (con desglose) y, al pasar el ratón sobre el precio de una operación, su precio de mercado, deslizamiento y comisiones. Las operaciones anteriores a esta versión cuentan 1 US$ de comisión.
+Todo es configurable por variables de entorno (`COST_US_PER_SHARE`, `COST_ES_PCT`, `COST_FX_BPS`, `COST_ITF_ES_PCT`, `COST_MAX_PARTICIPATION_PCT`, `COST_IMPACT_K`, `DIV_TAX_US`, `DIV_TAX_ES`…). `COST_MODEL=simple` vuelve al modelo antiguo para comparar.

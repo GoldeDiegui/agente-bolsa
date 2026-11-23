@@ -33,15 +33,15 @@ async function fetchDaily(symbol) {
   const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(12000) });
   if (!res.ok) throw new Error('HTTP ' + res.status);
   const r = (await res.json())?.chart?.result?.[0];
-  const ts = r?.timestamp, cl = r?.indicators?.quote?.[0]?.close;
+  const ts = r?.timestamp, cl = r?.indicators?.quote?.[0]?.close, vo = r?.indicators?.quote?.[0]?.volume ?? [];
   if (!ts || !cl) throw new Error('sin datos');
-  const t = [], c = [];
-  ts.forEach((x, i) => { if (typeof cl[i] === 'number' && cl[i] > 0) { t.push(x * 1000); c.push(cl[i]); } });
-  return { t, c };
+  const t = [], c = [], v = [];
+  ts.forEach((x, i) => { if (typeof cl[i] === 'number' && cl[i] > 0) { t.push(x * 1000); c.push(cl[i]); v.push(typeof vo[i] === 'number' ? vo[i] : 0); } });
+  return { t, c, v };
 }
 
 // ---- cálculo (puro, para poder probarlo) ----
-export function computeTech(c) {
+export function computeTech(c, v = []) {
   const n = c.length;
   if (n < 130) return null;
   const last = c[n - 1];
@@ -59,7 +59,11 @@ export function computeTech(c) {
   const high52 = Math.max(...yr), low52 = Math.min(...yr);
   const s50 = sma(50), s200 = sma(200);
   const r = (v, d = 1) => (v == null ? null : +v.toFixed(d));
+  // volumen diario medio negociado (en la moneda del valor): media de cierre × volumen de las últimas 30 sesiones con volumen
+  const dv = c.map((x, i) => x * (v[i] ?? 0)).slice(-30).filter((x) => x > 0);
+  const advNative = dv.length >= 10 ? dv.reduce((a, b) => a + b, 0) / dv.length : null;
   return {
+    advNative: advNative == null ? null : Math.round(advNative),
     last: r(last, 2), ret1m: r(ret(21)), ret3m: r(ret(63)), ret6m: r(ret(126)), ret12m: r(ret(252)), mom12_1: r(mom12_1),
     sma50: r(s50, 2), sma200: r(s200, 2), vs200: s200 ? r((last / s200 - 1) * 100) : null,
     rsi: r(rsi, 0), high52: r(high52, 2), low52: r(low52, 2), offHigh: r((last / high52 - 1) * 100), aboveLow: r((last / low52 - 1) * 100),
@@ -78,8 +82,8 @@ export async function refreshTech(symbols, { budgetMs = 60000, ttlMs = 20 * HOUR
     while (i < jobs.length && Date.now() < deadline) {
       const [kind, s] = jobs[i++];
       try {
-        const { t, c } = await fetchDaily(s);
-        const ind = computeTech(c);
+        const { t, c, v } = await fetchDaily(s);
+        const ind = computeTech(c, v);
         if (!ind) throw new Error('historial corto');
         const from = Math.max(0, c.length - KEEP);
         cache[kind][s] = { fetchedAt: Date.now(), t: t[t.length - 1], ind, d: t.slice(from).map((x) => Math.round(x / DAY)), c: c.slice(from).map((x) => +x.toFixed(2)) };

@@ -5,10 +5,11 @@ import { fileURLToPath } from 'node:url';
 import { getQuote, getAllQuotes, isValid, getHistory } from './market.js';
 import { tradeStatus } from './hours.js';
 import { stopFor, regimeSummary } from './volatility.js';
+import { costsFor, dividendTaxPct, costSummary, COST } from './costs.js';
 
 export const INITIAL_CASH = 100000;
 const MAX_POSITION_PCT = 0.30; // límite de riesgo: máx. 30% del patrimonio en un valor
-const COMMISSION = 1.0;        // comisión fija por orden (USD)
+// Los costes de operar (comisión, deslizamiento, divisa, impuestos) están en costs.js
 
 // --- Persistencia: la cartera se guarda en data/state.json y se recupera al arrancar ---
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -71,40 +72,52 @@ export function addAgentLog(entry) {
 }
 export const getAgentLog = () => state.agentLog;
 
-export function placeOrder({ symbol, side, shares, reason = '', by = 'usuario' }) {
+export function placeOrder({ symbol, side, shares, reason = '', by = 'usuario', limitFill = false }) {
   symbol = String(symbol || '').toUpperCase();
   shares = Math.floor(Number(shares));
   if (!isValid(symbol) || symbol === 'SPY') return { ok: false, error: `Símbolo no operable: ${symbol}` };
   if (!['buy', 'sell'].includes(side)) return { ok: false, error: 'side debe ser buy o sell' };
   if (!(shares > 0)) return { ok: false, error: 'La cantidad debe ser un entero positivo' };
 
-  const price = getQuote(symbol)?.price;
+  const q = getQuote(symbol);
+  const price = q?.price;
   if (price == null) return { ok: false, error: `Todavía no tengo el precio de ${symbol} (se carga en segundo plano; prueba en unos segundos)` };
-  const ts = tradeStatus(getQuote(symbol));
+  const ts = tradeStatus(q);
   if (!ts.ok) return { ok: false, error: `No se puede operar ${symbol} ahora: ${ts.reason}` };
-  const gross = price * shares;
+
+  // Costes: precio de ejecución con deslizamiento, comisión, divisa e impuestos; y límite de liquidez (% del volumen diario)
+  const c = costsFor({ symbol, side, shares, q, limitFill });
+  if (c.partial) {
+    if (!(c.shares >= 1)) return { ok: false, error: `Liquidez insuficiente en ${symbol}: una orden no puede superar el ${COST.maxPartPct} % del volumen diario` };
+    shares = c.shares; // se ejecuta solo lo que el volumen permite
+  }
+  const exec = c.exec, gross = exec * shares, fees = c.fee + c.fx + c.tax;
+  const fxCost = c.fx, taxCost = c.tax, slipCost = c.slip;
 
   if (side === 'buy') {
-    if (gross + COMMISSION > state.cash) return { ok: false, error: `Efectivo insuficiente (${state.cash.toFixed(2)} disponible)` };
+    if (gross + fees > state.cash) return { ok: false, error: `Efectivo insuficiente (${state.cash.toFixed(2)} disponible)` };
     const equity = getSummary().equity;
     const current = (state.positions[symbol]?.shares ?? 0) * price;
     if ((current + gross) / equity > MAX_POSITION_PCT) {
       return { ok: false, error: `Superaría el límite del ${MAX_POSITION_PCT * 100}% del patrimonio en ${symbol}` };
     }
     const pos = state.positions[symbol] ?? { shares: 0, avgCost: 0, evFrom: Date.now(), evDone: [], evCheckedTo: Date.now() };
-    pos.avgCost = (pos.avgCost * pos.shares + gross) / (pos.shares + shares);
+    pos.avgCost = (pos.avgCost * pos.shares + gross + fees) / (pos.shares + shares); // el coste medio incluye los costes de compra
     pos.shares += shares;
     state.positions[symbol] = pos;
-    state.cash -= gross + COMMISSION;
+    state.cash -= gross + fees;
   } else {
     const pos = state.positions[symbol];
     if (!pos || pos.shares < shares) return { ok: false, error: `No tienes ${shares} acciones de ${symbol}` };
     pos.shares -= shares;
     if (pos.shares === 0) delete state.positions[symbol];
-    state.cash += gross - COMMISSION;
+    state.cash += gross - fees;
   }
 
-  const order = { id: state.orders.length + 1, t: Date.now(), symbol, side, shares, price, total: +gross.toFixed(2), reason, by };
+  const order = {
+    id: state.orders.length + 1, t: Date.now(), symbol, side, shares, price: exec, total: +gross.toFixed(2), reason, by,
+    refPrice: +price.toFixed(4), fee: +c.fee.toFixed(2), fxCost: +fxCost.toFixed(2), tax: +taxCost.toFixed(2), slip: +slipCost.toFixed(2), slipBps: c.slipBps,
+  };
   state.orders.push(order);
   saveSoon();
   return { ok: true, order };
@@ -192,7 +205,7 @@ export const getPending = () => state.pending.slice();
 // ---------- Splits y dividendos ----------
 // Un split no cambia el valor de la posición: multiplica las acciones y divide el coste medio (y el precio de mercado baja
 // en la misma proporción). Si no se ajusta, la cartera vería una pérdida falsa y el stop-loss vendería.
-// Los dividendos se abonan en efectivo (sin retención de impuestos).
+// Los dividendos se abonan en efectivo, netos de la retención en origen (ver costs.js).
 // Cada posición recuerda desde cuándo cuenta (evFrom), qué eventos ya se aplicaron (evDone) y cuándo se revisó por última vez (evCheckedTo).
 const firstBuyTime = (symbol) => state.orders.find((o) => o.symbol === symbol && o.side === 'buy')?.t;
 export const getEventWatch = () => Object.keys(state.positions).map((symbol) => ({ symbol }));
@@ -228,10 +241,11 @@ export function applyCorporateEvents(symbol, events, checkedTo = Date.now()) {
       state.events.push(e); applied.push(e); pos.evDone.push(key);
       if (newShares === 0) { delete state.positions[symbol]; break; }
     } else if (ev.type === 'dividend' && rate) {
-      const total = +(pos.shares * ev.amount * rate).toFixed(2);
+      const grossDiv = pos.shares * ev.amount * rate, taxPct = dividendTaxPct(q.market);
+      const tax = +((grossDiv * taxPct) / 100).toFixed(2), total = +(grossDiv - tax).toFixed(2);
       state.cash += total;
-      const e = { t: Date.now(), evT: ev.t, symbol, type: 'dividend', shares: 0, total,
-        text: `Dividendo de ${ev.amount} ${q.currency}/acción × ${pos.shares} acciones = ${total.toFixed(2)} US$ (sin impuestos)` };
+      const e = { t: Date.now(), evT: ev.t, symbol, type: 'dividend', shares: 0, total, tax,
+        text: `Dividendo de ${ev.amount} ${q.currency}/acción × ${pos.shares} acciones = ${grossDiv.toFixed(2)} US$ brutos` + (taxPct ? `, retención del ${taxPct} % (${tax.toFixed(2)} US$): ${total.toFixed(2)} US$ netos` : ' (sin impuestos)') };
       state.events.push(e); applied.push(e); pos.evDone.push(key);
     }
   }
@@ -259,7 +273,7 @@ export function checkPending() {
     if (!tradeStatus(q).ok) continue; // mercado cerrado: la orden espera a la próxima sesión
     if (!hit(o.side, q.priceNative, o.limit)) continue;
     const r = placeOrder({
-      symbol: o.symbol, side: o.side, shares: o.shares, by: o.by,
+      symbol: o.symbol, side: o.side, shares: o.shares, by: o.by, limitFill: true,
       reason: `Orden límite #${o.id} (${o.side === 'buy' ? '≤' : '≥'} ${o.limit} ${o.currency})${o.reason ? ': ' + o.reason : ''}`,
     });
     if (r.ok) {
@@ -307,6 +321,7 @@ export function getRisk() {
     vsSpyPct: +(pfRet - spyRet).toFixed(2),
     maxPositionLimitPct: MAX_POSITION_PCT * 100,
     regime: regimeSummary(),
+    costs: costSummary(state.orders, state.events, INITIAL_CASH),
   };
 }
 
