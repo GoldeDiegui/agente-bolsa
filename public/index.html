@@ -201,7 +201,7 @@ function renderCoverage(c) {
   $('anInfo').textContent = `· ${c.analyzed} de ${c.total} valores con datos fundamentales` + (c.analyzed < c.total ? ' (se siguen descargando en segundo plano)' : '');
 }
 const HNAME = { 5: '5 sesiones (≈1 semana)', 20: '20 sesiones (≈1 mes)', 60: '60 sesiones (≈3 meses)' };
-const CNAME = { score: 'Puntuación total', valuation: 'Valoración', growth: 'Crecimiento', quality: 'Calidad', analysts: 'Analistas', earnings: 'Resultados', revisions: 'Revisiones de estimaciones', momentum: 'Momentum', insiders: 'Directivos (insiders)', sentiment: 'Noticias' };
+const CNAME = { score: 'Puntuación total', valuation: 'Valoración', growth: 'Crecimiento', quality: 'Calidad', analysts: 'Analistas', earnings: 'Resultados', revisions: 'Revisiones de estimaciones', momentum: 'Momentum', insiders: 'Directivos (insiders)', shorts: 'Posición corta', sentiment: 'Noticias' };
 const sg = (x, d = 2) => (x == null ? '–' : (x > 0 ? '+' : '') + x.toFixed(d));
 function renderScore(sc) {
   if (!sc) return;
@@ -242,7 +242,7 @@ async function loadOpps() {
 }
 for (const id of ['opVerdict', 'opMarket', 'opSort']) document.addEventListener('DOMContentLoaded', () => $(id).addEventListener('change', loadOpps));
 
-const NAMES = { valuation:'Valoración', growth:'Crecimiento', quality:'Calidad', analysts:'Analistas', earnings:'Resultados', revisions:'Revisiones', momentum:'Momentum', insiders:'Directivos', sentiment:'Noticias' };
+const NAMES = { valuation:'Valoración', growth:'Crecimiento', quality:'Calidad', analysts:'Analistas', earnings:'Resultados', revisions:'Revisiones', momentum:'Momentum', insiders:'Directivos', shorts:'Posición corta', sentiment:'Noticias' };
 
 // ---------- Cuentas de la empresa (ingresos, gastos, balance) ----------
 let FIN_ALL = null, FIN_P = null, finMode = 'qy'; // FIN_ALL: datos; FIN_P: la descarga en curso
