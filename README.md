@@ -172,3 +172,14 @@ Nuevo componente **Posición corta** (peso ≈ 3 %), solo S&P 500: porcentaje de
 Tarjeta «Contexto macro» en la web con el VIX (miedo del mercado), el bono de EE. UU. a 10 años, la letra a 3 meses, la curva 10 años − 3 meses, el índice dólar, el petróleo WTI y el oro, con su variación del día y del mes y avisos en lenguaje claro (curva invertida, subida rápida de tipos, dólar fuerte, petróleo disparado). Datos del gráfico diario de Yahoo, sin clave; se renuevan cada 30 min y se guardan en `macro.json`.
 
 **Cómo lo usa el gestor:** solo el VIX actúa sobre las órdenes. VIX ≥ 25 («tensión elevada»): compras a ¾ del tamaño y colchón de efectivo del 20 %. VIX ≥ 30 («alta»): compras al 60 % y colchón del 25 %. Se combina con la tendencia del S&P 500 (se aplica lo más prudente). El resto de indicadores es informativo por ahora. Si no hay datos del VIX, no se aplica nada. El resumen del día y el registro del gestor mencionan la tensión cuando existe.
+
+## Noticias mejoradas (`news.js`)
+
+Para la cartera y los candidatos, las noticias vienen ahora de tres sitios y se unen:
+1. La fuente de siempre (Finnhub para el S&P 500 con clave, Yahoo en el resto).
+2. **Google News** (RSS por empresa, en inglés para el S&P 500 y en español para el IBEX; sin clave).
+3. **Comunicados 8-K de la SEC** (hechos relevantes de empresas de EE. UU.; sin clave). Cada apartado del 8-K tiene su propia valoración: p. ej. 4.02 «las cuentas anteriores no son fiables» (riesgo grave), 1.03 quiebra, 3.01 aviso de exclusión de bolsa, 2.06 deterioro de activos, 5.02 salida de directivos, 2.02 resultados (neutro).
+- **Sin duplicados:** el mismo titular en varios medios cuenta una vez (similitud de palabras ≥ 60 % en 3 días); si lo cuentan varios medios, pesa algo más (hasta ×1,3).
+- **Peso por fuente:** Reuters, Bloomberg, WSJ, FT, CNBC, SEC, Expansión… ×1; medios intermedios ×0,8; Motley Fool, Seeking Alpha, Zacks, MarketBeat… ×0,5; titulares de «clickbait» («3 reasons to buy…») ×0,5 adicional. Las noticias de poco peso no cuentan como positivas/negativas ni como riesgo grave.
+- En el detalle de cada valor, los titulares son enlaces con fecha, medio y número de medios que lo cuentan.
+Límites: Google 20/min, SEC 60/min (`GOOGLE_NEWS_PER_MIN`, `SEC_PER_MIN`; `SEC_USER_AGENT` para identificarte ante la SEC). Si una fuente extra falla, se sigue con las demás.

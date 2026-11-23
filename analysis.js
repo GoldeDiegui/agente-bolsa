@@ -3,6 +3,7 @@
 import { UNIVERSE, getQuote } from './market.js';
 import { getFundamentals, getNews, getEstimates, getNextEarnings, getInsiders, getOwnership, fundamentalsStats } from './fundamentals.js';
 import { getTech } from './technicals.js';
+import { sourceWeight } from './news.js';
 
 const BY = new Map(UNIVERSE.map((u) => [u.symbol, u]));
 const DAY = 86400e3;
@@ -88,11 +89,12 @@ export function scoreNews(items) {
   for (const it of items ?? []) {
     const age = (now - it.t) / DAY;
     if (!(age <= 7)) continue;
-    const r = scoreHeadline(it.headline);
-    S += Math.exp(-Math.max(age, 0) / 3) * r.score; // las noticias recientes pesan más
-    if (r.score >= 1) pos++;
-    if (r.score <= -1) neg++;
-    if (r.red && age <= 5) redCount++;
+    const r = it.override ?? scoreHeadline(it.headline);
+    // peso: fuente fiable (Reuters, SEC…) > blog/clickbait; si varios medios cuentan lo mismo, algo más
+    const w = (it.w ?? sourceWeight(it.source, it.headline)) * Math.min(1.3, 1 + 0.1 * ((it.n ?? 1) - 1));
+    S += w * Math.exp(-Math.max(age, 0) / 3) * r.score; // las noticias recientes pesan más
+    if (w >= 0.5) { if (r.score >= 1) pos++; if (r.score <= -1) neg++; }
+    if (r.red && age <= 5 && (w >= 0.8 || it.via === 'sec')) redCount++;
     scored.push({ ...it, sentiment: r.score, tags: r.tags, red: r.red });
   }
   if (!scored.length) return null;

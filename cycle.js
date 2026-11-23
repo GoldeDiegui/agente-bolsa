@@ -118,13 +118,13 @@ function exportSite() {
   const analyses = {};
   for (const sym of syms) {
     const a = analyze(sym);
-    if (a) analyses[sym] = { ...a, headlines: (a.headlines ?? []).slice(0, 4).map((h) => ({ headline: h.headline, source: h.source })) };
+    if (a) analyses[sym] = { ...a, headlines: (a.headlines ?? []).slice(0, 5).map((h) => ({ headline: h.headline, source: h.source, t: h.t, url: h.url, n: h.n })) };
   }
   // Análisis de TODOS los valores en un fichero aparte (la web lo descarga solo al abrir un valor que no esté en state.json)
   const all = {};
   for (const u of UNIVERSE) {
     const a = analyze(u.symbol);
-    if (a) all[u.symbol] = { ...a, headlines: (a.headlines ?? []).slice(0, 3).map((h) => ({ headline: h.headline, source: h.source })) };
+    if (a) all[u.symbol] = { ...a, headlines: (a.headlines ?? []).slice(0, 4).map((h) => ({ headline: h.headline, source: h.source, t: h.t, url: h.url, n: h.n })) };
   }
   fs.mkdirSync(SITE_DIR, { recursive: true });
   fs.writeFileSync(path.join(SITE_DIR, 'analyses.json'), JSON.stringify({ updatedAt: Date.now(), analyses: all }));

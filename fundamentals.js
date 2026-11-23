@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { UNIVERSE } from './market.js';
+import { fetchGoogleNews, fetchSecFilings, mergeNews } from './news.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_FILE = process.env.FUNDAMENTALS_FILE || path.join(__dirname, 'data', 'fundamentals.json');
@@ -24,7 +25,7 @@ const BY = new Map(UNIVERSE.map((u) => [u.symbol, u]));
 export const hasFinnhub = () => Boolean(FINNHUB_KEY);
 
 const cache = { fundamentals: {}, news: {}, estimates: {}, statements: {}, insiders: {}, calendar: { fetchedAt: 0, dates: {} } };
-const status = { errors: {}, paused: { finnhub: 0, yahoo: 0 } };
+const status = { errors: {}, paused: { finnhub: 0, yahoo: 0, google: 0, sec: 0 } };
 
 // ---------- caché en disco ----------
 function load() {
@@ -72,6 +73,8 @@ const limiters = {
   yahoo: makeLimiter(Number(process.env.YAHOO_FUND_PER_MIN || 15)),
   yahooStmt: makeLimiter(Number(process.env.YAHOO_STMT_PER_MIN || 40)),
   yahooIns: makeLimiter(Number(process.env.YAHOO_INS_PER_MIN || 30)),
+  google: makeLimiter(Number(process.env.GOOGLE_NEWS_PER_MIN || 20)),
+  sec: makeLimiter(Number(process.env.SEC_PER_MIN || 60)),
 };
 
 async function http(url, { headers = {}, timeout = 8000, as = 'json' } = {}) {
@@ -532,7 +535,17 @@ async function refreshEstimates(s) {
 async function refreshNews(s) {
   const prev = cache.news[s];
   try {
-    const items = providerFor(s) === 'finnhub' ? await fetchFinnhubNews(s) : await fetchYahooNews(s);
+    // Fuente principal (Finnhub o Yahoo) + Google News + comunicados 8-K de la SEC; se unen y se quitan duplicados.
+    // Las fuentes extra son opcionales: si fallan, se sigue con lo que haya.
+    const u = BY.get(s);
+    let main = null, mainErr = null;
+    try { main = providerFor(s) === 'finnhub' ? await fetchFinnhubNews(s) : await fetchYahooNews(s); } catch (e) { mainErr = e; }
+    const extra = [];
+    try { extra.push(await viaProvider('google', () => fetchGoogleNews(u))); } catch (e) { if (!e.paused) noteError('noticias (Google)', s, e); }
+    if (u.market === 'S&P 500') { try { extra.push(await viaProvider('sec', () => fetchSecFilings(s))); } catch (e) { if (!e.paused) noteError('comunicados SEC', s, e); } }
+    if (mainErr && !extra.some((l) => l.length)) throw mainErr;
+    const items = mergeNews(main ?? [], ...extra).slice(0, 30)
+      .map(({ t, headline, summary, source, url, via, w, n, override, codes }) => ({ t, headline, summary, source, url, via, w, n, override, codes }));
     cache.news[s] = { fetchedAt: Date.now(), items };
   } catch (e) {
     if (e.paused || e.status === 429) return;
