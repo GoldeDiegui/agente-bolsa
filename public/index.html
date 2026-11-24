@@ -96,6 +96,11 @@
     <div id="macro"></div>
   </section>
 
+  <section class="card c12" id="perfCard" style="display:none">
+    <h2>Rendimiento <span id="perfSince" style="text-transform:none;letter-spacing:0"></span></h2>
+    <div id="perf"></div>
+  </section>
+
   <section class="card c8">
     <h2>Evolución del patrimonio vs S&amp;P 500</h2>
     <div class="chartbox"><canvas id="eqChart"></canvas></div>
@@ -311,6 +316,59 @@ async function loadFin(sym) {
     renderFin(sym);
   } catch { if ($('fin')) $('fin').innerHTML = '<h4>Cuentas</h4><p style="color:var(--mut);font-size:12px">No se pudieron cargar las cuentas ahora mismo.</p>'; }
 }
+
+
+// ---------- Rendimiento (métricas de gestora) ----------
+function renderPerf(p) {
+  const card = $('perfCard');
+  if (!p || !p.curve) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  const c = p.curve, t = p.trades;
+  const nf = (v, d = 2) => v == null ? '–' : Number(v).toLocaleString('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d });
+  const sp = (v, d = 2) => v == null ? '–' : (v > 0 ? '+' : '') + nf(v, d) + ' %';
+  const cl = (v) => v == null ? '' : v >= 0 ? 'up' : 'down';
+  const sg = (v) => v == null ? '–' : (v > 0 ? '+' : '') + usd(v);
+  $('perfSince').textContent = '· desde ' + new Date(p.since).toLocaleDateString('es-ES') + ' (' + c.calendarDays + ' días, ' + c.days + (c.days === 1 ? ' sesión registrada)' : ' sesiones registradas)');
+  const tile = (label, val, cls2, tip) => `<div style="min-width:130px" title="${esc(tip ?? '')}"><div style="color:var(--mut);font-size:11px">${label}</div><b class="${cls2 ?? ''}" style="font-size:17px">${val}</b></div>`;
+  const block = (title, tiles) => `<div style="margin-bottom:10px"><div style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">${title}</div><div style="display:flex;flex-wrap:wrap;gap:8px 22px">${tiles.join('')}</div></div>`;
+  const ratio = (v) => v == null ? '–' : nf(v);
+  const html = [
+    block('Rentabilidad', [
+      tile('Cartera', sp(c.totalPct), cl(c.totalPct)), tile('S&P 500 (SPY)', sp(c.spyTotalPct), cl(c.spyTotalPct)), tile('Diferencia', sp(c.excessPct), cl(c.excessPct), 'Cartera menos S&P 500, en puntos'),
+      tile('Anualizada', sp(c.annualizedPct), cl(c.annualizedPct), 'Se muestra a partir de 30 días'), tile('Mejor / peor día', c.bestDayPct == null ? '–' : `<span class="up">${sp(c.bestDayPct)}</span> / <span class="down">${sp(c.worstDayPct)}</span>`), tile('Días en positivo', c.upDaysPct == null ? '–' : c.upDaysPct + ' %'),
+    ]),
+    block('Riesgo y calidad de la rentabilidad' + (c.returns < c.minDaysRisk ? ' (pendiente de más historial)' : ''), [
+      tile('Volatilidad anual', c.volPct == null ? '–' : nf(c.volPct) + ' %', '', 'Desviación típica de las rentabilidades diarias × √252. Frente al S&P 500: ' + (c.spyVolPct ?? '–') + ' %'),
+      tile('Sharpe', ratio(c.sharpe), '', 'Rentabilidad por encima del tipo sin riesgo (' + nf(c.riskFreePct) + ' %) entre volatilidad. >1 bueno, >2 muy bueno'),
+      tile('Sortino', ratio(c.sortino), '', 'Como Sharpe, pero solo penaliza las caídas'),
+      tile('Caída máxima', sp(c.maxDrawdownPct), 'down', 'Mayor caída desde un máximo. S&P 500 (SPY): ' + (c.spyMaxDrawdownPct ?? '–') + ' %'),
+      tile('Caída actual', sp(c.currentDrawdownPct), cl(c.currentDrawdownPct)),
+      tile('Beta', ratio(c.beta), '', 'Sensibilidad al S&P 500: 1 = se mueve igual, <1 se mueve menos'),
+      tile('Alfa anual', sp(c.alphaPct), cl(c.alphaPct), 'Rentabilidad extra que no explica el movimiento del mercado (ajustada por beta)'),
+      tile('Correlación', ratio(c.correlation), '', 'Con el S&P 500 (1 = idéntica)'),
+      tile('Tracking error', c.trackingErrorPct == null ? '–' : nf(c.trackingErrorPct) + ' %', '', 'Desviación de la cartera respecto al S&P 500'),
+      tile('Info ratio', ratio(c.infoRatio), '', 'Exceso sobre el S&P 500 por unidad de tracking error'),
+    ]),
+    block('Operaciones (ventas cerradas: ' + (t.closed ?? 0) + ')', t.closed ? [
+      tile('Aciertos', t.hitRatePct + ' %', '', t.wins + ' ganadoras, ' + t.losses + ' perdedoras'),
+      tile('Ganancia media', sp(t.avgWinPct) + ' · ' + sg(t.avgWinUsd), 'up'), tile('Pérdida media', sp(t.avgLossPct) + ' · ' + sg(t.avgLossUsd), 'down'),
+      tile('Factor de beneficio', ratio(t.profitFactor), '', 'Ganancias totales entre pérdidas totales. >1 gana más de lo que pierde'),
+      tile('Esperanza por venta', sg(t.expectancyUsd), cl(t.expectancyUsd)), tile('Duración media', nf(t.avgHoldDays, 1) + ' días'),
+      tile('Mejor venta', esc(t.best.symbol) + ' ' + sp(t.best.retPct, 1), 'up'), tile('Peor venta', esc(t.worst.symbol) + ' ' + sp(t.worst.retPct, 1), 'down'),
+      tile('Rotación', nf(t.turnoverPct, 0) + ' %' + (t.turnoverAnnualPct != null ? ' (' + nf(t.turnoverAnnualPct, 0) + ' % anual)' : ''), '', 'Volumen negociado / 2 entre patrimonio medio'),
+      tile('Costes de operar', usd(t.costsUsd) + ' (' + nf(t.costsPctOfCapital, 2) + ' %)'),
+    ] : [tile('Rotación', nf(t.turnoverPct, 0) + ' %'), tile('Operaciones', t.orders), tile('Costes de operar', usd(t.costsUsd) + ' (' + nf(t.costsPctOfCapital, 2) + ' %)')]),
+  ].join('');
+  const tbl = (title, rows, first, wide) => `<div style="flex:1 1 ${wide ? '100%' : '460px'};min-width:0;overflow-x:auto"><div style="font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">${title}</div><table style="width:100%;font-size:12px;white-space:nowrap"><thead><tr><th>${first}</th><th class="r">Aporta</th><th class="r">Realizado</th><th class="r">Latente</th><th class="r">Dividendos</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  const rowOf = (label, x) => `<tr><td>${label}</td><td class="r ${cl(x.total)}"><b>${sp(x.contribPct)}</b> <span style="color:var(--mut)">${sg(x.total)}</span></td><td class="r ${cl(x.realized)}">${sg(x.realized)}</td><td class="r ${cl(x.unrealized)}">${sg(x.unrealized)}</td><td class="r">${x.dividends ? sg(x.dividends) : ''}</td></tr>`;
+  const sym = p.bySymbol.slice(0, 12).map(x => rowOf(`<b class="sym" data-sym="${esc(x.symbol)}">${esc(x.symbol)}</b>${x.open ? '' : ' <span class="tag">cerrada</span>'}`, x)).join('');
+  const sec = p.bySector.map(x => rowOf(esc(x.name) + ` <span style="color:var(--mut)">(${x.n})</span>`, x)).join('');
+  const mk = p.byMarket.map(x => rowOf(esc(x.name) + (x.indexPct != null ? ` <span style="color:var(--mut)" title="Rentabilidad del índice en el mismo periodo">· índice ${sp(x.indexPct)}</span>` : ''), x)).join('');
+  $('perf').innerHTML = html +
+    `<div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:6px">${tbl('Por valor (mayores aportaciones)', sym, 'Valor', true)}${tbl('Por sector', sec, 'Sector')}${tbl('Por mercado', mk, 'Mercado')}</div>` +
+    `<p style="color:var(--mut);font-size:11px;margin:8px 0 0">«Aporta» = ganancia del valor en US$ y en puntos sobre el capital inicial (100.000 US$); la suma de todos coincide con la ganancia total (tras costes). ` + (p.notes ?? []).map(esc).join(' ') + `</p>`;
+}
+async function loadPerf() { try { renderPerf(await (await fetch('/api/performance')).json()); } catch { /* se reintenta */ } }
 
 
 // ---------- Resumen del día ----------
@@ -566,7 +624,7 @@ async function loadStatic() {
     eqChart.data.labels = []; eqChart.data.datasets.forEach(d => d.data = []);
     s.curve.forEach(addPoint); eqChart.update();
     renderPortfolio(s.portfolio); renderRisk(s.risk, s.portfolio); renderMarket(s.quotes, s.market);
-    renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); renderScore(s.scorecard); renderBanner(s); renderDaily(s.daily); renderMacro(s.macro);
+    renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); renderScore(s.scorecard); renderBanner(s); renderDaily(s.daily); renderMacro(s.macro); renderPerf(s.performance);
     $('live').textContent = '● publicado ' + ago(s.updatedAt); $('live').className = (Date.now() - s.updatedAt < 3 * 3600e3 ? 'up' : 'down');
   };
   await refresh();
@@ -579,7 +637,7 @@ async function load() {
   initCharts();
   s.curve.forEach(addPoint); eqChart.update();
   renderPortfolio(s.portfolio); renderRisk(s.risk, s.portfolio); renderMarket(s.quotes, s.market);
-  renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); setInterval(loadOpps, 30000); loadDaily(); setInterval(loadDaily, 60000); loadMacro(); setInterval(loadMacro, 120000); loadScore(); setInterval(loadScore, 600000);
+  renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); setInterval(loadOpps, 30000); loadDaily(); setInterval(loadDaily, 60000); loadPerf(); setInterval(loadPerf, 120000); loadMacro(); setInterval(loadMacro, 120000); loadScore(); setInterval(loadScore, 600000);
   if (s.agentMode === 'reglas') addMsg('Modo gratuito: soy un gestor basado en reglas (stop-loss -8%, toma de beneficios +15%, máx. 25% por valor, 15% de efectivo mínimo). Decido con análisis fundamental (valoración frente al sector, crecimiento, calidad, analistas, resultados y noticias). Prueba "oportunidades", "analiza apple", "¿está cara nvidia?", "por qué compraste X", "revisa la cartera" o "estado de los datos". Revisión automática cada 5 minutos.', 'a');
 
   const es = new EventSource('/api/stream');
