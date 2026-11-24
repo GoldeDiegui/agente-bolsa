@@ -9,6 +9,7 @@ import { checkCorporateEvents } from './corporate.js';
 import { refreshTech, ensureTech, getTech } from './technicals.js';
 import { refreshMacro, macroSummary } from './macro.js';
 import { dailySummary } from './daily.js';
+import { performanceReport } from './performance.js';
 import { refreshVolatility, refreshRegime } from './volatility.js';
 import { maybeSnapshot, evaluate, summary as scoreSummary } from './scorecard.js';
 import { analyze, analysisText, brief, rank, shortlist, analysisCoverage } from './analysis.js';
@@ -85,6 +86,7 @@ app.get('/api/chart/:symbol', async (req, res) => {
   catch (e) { res.status(502).json({ error: e.message }); }
 });
 app.get('/api/macro', (_req, res) => res.json(macroSummary()));
+app.get('/api/performance', (_req, res) => res.json(performanceReport()));
 app.get('/api/daily', (_req, res) => res.json(dailySummary()));
 app.get('/api/history/:symbol', (req, res) => res.json(getHistory(req.params.symbol.toUpperCase())));
 

@@ -61,6 +61,9 @@ export async function refreshMacro({ force = false } = {}) {
 }
 
 // ---- consulta ----
+// Tipo sin riesgo (letra de EE. UU. a 3 meses) en tanto por uno; 0 si no hay dato
+export function getRiskFree() { const v = cache.ind.us3m; return v && Number.isFinite(v.last) && Date.now() - v.t < 7 * 86400e3 ? v.last / 100 : 0; }
+
 export function stressInfo() {
   const v = cache.ind.vix; if (!v || Date.now() - v.t > 12 * 3600e3) return null;
   const level = stressFromVix(v.last);

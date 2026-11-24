@@ -25,9 +25,20 @@ const freshState = () => ({
   pending: [],     // órdenes límite pendientes
   pendingSeq: 0,
   events: [],      // splits y dividendos aplicados a las posiciones
+  dailyEquity: [], // un punto por día (hora de Madrid): { d, equity, spy } — base de las métricas de rendimiento
+  startT: null,    // momento del primer registro de la cartera
 });
 
 let state = freshState();
+
+const MADRID_DAY = (t) => new Date(t).toLocaleDateString('en-CA', { timeZone: 'Europe/Madrid' });
+// Un punto por día: el último valor registrado ese día (cierre). Máximo ~5 años.
+function upsertDaily(t, equity, spy) {
+  const d = MADRID_DAY(t), arr = state.dailyEquity;
+  const pt = { d, equity: +equity.toFixed(2), spy: +spy.toFixed(2) };
+  if (arr.length && arr[arr.length - 1].d === d) arr[arr.length - 1] = pt; else arr.push(pt);
+  if (arr.length > 1300) arr.shift();
+}
 
 function load() {
   try {
@@ -35,6 +46,9 @@ function load() {
     const saved = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     if (typeof saved.cash !== 'number' || typeof saved.positions !== 'object') throw new Error('formato no válido');
     state = { ...freshState(), ...saved };
+    // versiones anteriores no guardaban el resumen diario: se reconstruye con la curva que haya
+    if (!state.dailyEquity.length && state.equityCurve.length) for (const pt of state.equityCurve) upsertDaily(pt.t, pt.equity, pt.spy);
+    state.startT ??= state.orders[0]?.t ?? state.equityCurve[0]?.t ?? null;
     console.log(`Cartera recuperada de ${DATA_FILE} (${state.orders.length} operaciones)`);
   } catch (e) {
     console.warn(`No se pudo leer ${DATA_FILE} (${e.message}); empiezo con una cartera nueva.`);
@@ -156,6 +170,8 @@ export function snapshot() {
   if (state.spyBase === null) state.spyBase = spy;
   state.equityCurve.push({ t: Date.now(), equity, spy: INITIAL_CASH * (spy / state.spyBase) });
   if (state.equityCurve.length > 2000) state.equityCurve.shift();
+  state.startT ??= Date.now();
+  upsertDaily(Date.now(), equity, INITIAL_CASH * (spy / state.spyBase));
   // El gráfico se guarda como mucho cada 30 s (las órdenes se guardan al momento);
   // así se evitan escrituras constantes, que molestan a OneDrive.
   if (Date.now() - lastCurveSave > 30000) { lastCurveSave = Date.now(); saveSoon(); }
@@ -289,6 +305,10 @@ export function checkPending() {
 }
 export const getOrders = () => state.orders.slice().reverse();
 export const getEquityCurve = () => state.equityCurve;
+export const getDailyEquity = () => state.dailyEquity;
+export const getStartTime = () => state.startT;
+export const getOrdersChrono = () => state.orders;       // de la más antigua a la más reciente
+export const getEventsChrono = () => state.events;
 
 export function getRisk() {
   const s = getSummary();

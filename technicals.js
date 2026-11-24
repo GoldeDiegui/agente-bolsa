@@ -138,6 +138,8 @@ export function getSeries(symbol) {
   const e = cache.sym[symbol];
   return e?.c ? { symbol, d: e.d, c: e.c, asOf: e.t } : null;
 }
+// Serie de cierres del índice de un mercado ({ d: días, c }), para compararla con la cartera
+export const getIndexSeries = (market) => { const e = cache.idx[INDEX[market]]; return e?.c ? { d: e.d, c: e.c } : null; };
 export const hasTech = (symbol) => Boolean(cache.sym[symbol]?.ind);
 export const techCount = () => Object.values(cache.sym).filter((e) => e.ind).length;
 

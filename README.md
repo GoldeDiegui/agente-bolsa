@@ -196,3 +196,14 @@ Cada orden ahora paga lo que costaría de verdad (antes: 1 US$ fijo y precio exa
 - El coste medio de cada posición incluye los costes de compra, así que el P&L y el stop-loss ya van «netos».
 - La web muestra en el panel de riesgo los **costes acumulados** (con desglose) y, al pasar el ratón sobre el precio de una operación, su precio de mercado, deslizamiento y comisiones. Las operaciones anteriores a esta versión cuentan 1 US$ de comisión.
 Todo es configurable por variables de entorno (`COST_US_PER_SHARE`, `COST_ES_PCT`, `COST_FX_BPS`, `COST_ITF_ES_PCT`, `COST_MAX_PARTICIPATION_PCT`, `COST_IMPACT_K`, `DIV_TAX_US`, `DIV_TAX_ES`…). `COST_MODEL=simple` vuelve al modelo antiguo para comparar.
+
+## Panel de rendimiento (estilo gestora)
+
+Tarjeta «Rendimiento» en la web (y `GET /api/performance` en local; en la web publicada va dentro de `state.json`). Se calcula con lo que la cartera ya guarda; no necesita nada nuevo de fuera salvo el tipo sin riesgo (letra a 3 meses, ya descargada en el bloque macro).
+
+- **Base**: la cartera guarda un punto de patrimonio por día (`dailyEquity`, hora de Madrid) junto al valor de SPY normalizado. Si el estado es anterior a esta versión, se reconstruye con la curva existente.
+- **Rentabilidad**: total, anualizada (desde 30 días), diferencia con el S&P 500, mejor/peor día, % de días en positivo.
+- **Riesgo** (desde 20 sesiones): volatilidad anual, Sharpe y Sortino (con el tipo sin riesgo), caída máxima y actual, beta, alfa anual, correlación, tracking error e information ratio frente al S&P 500.
+- **Operaciones**: % de aciertos, ganancia y pérdida media, factor de beneficio, esperanza por venta, duración media, mejor y peor venta, rotación y costes de operar. El coste medio de cada posición incluye las comisiones de compra.
+- **Aportación**: por valor, sector y mercado (realizado + latente + dividendos, en US$ y en puntos sobre el capital inicial). La suma coincide con la ganancia total; `reconciliation` del informe lo comprueba.
+- Con poco historial la tarjeta lo avisa en lugar de mostrar cifras engañosas.
