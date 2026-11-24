@@ -27,9 +27,15 @@ const freshState = () => ({
   events: [],      // splits y dividendos aplicados a las posiciones
   dailyEquity: [], // un punto por día (hora de Madrid): { d, equity, spy } — base de las métricas de rendimiento
   startT: null,    // momento del primer registro de la cartera
+  journal: [],     // diario de operaciones: una entrada por posición (ver journal.js)
 });
 
 let state = freshState();
+
+// Ganchos para módulos que reaccionan a las operaciones (diario) sin crear dependencias circulares
+let hooks = {};
+export const setHooks = (h) => { hooks = { ...hooks, ...h }; };
+export const getJournalRaw = () => state.journal;
 
 const MADRID_DAY = (t) => new Date(t).toLocaleDateString('en-CA', { timeZone: 'Europe/Madrid' });
 // Un punto por día: el último valor registrado ese día (cierre). Máximo ~5 años.
@@ -106,6 +112,7 @@ export function placeOrder({ symbol, side, shares, reason = '', by = 'usuario', 
     shares = c.shares; // se ejecuta solo lo que el volumen permite
   }
   const exec = c.exec, gross = exec * shares, fees = c.fee + c.fx + c.tax;
+  let jb = null; // situación de la posición antes de la orden (para el diario)
   const fxCost = c.fx, taxCost = c.tax, slipCost = c.slip;
 
   if (side === 'buy') {
@@ -116,6 +123,7 @@ export function placeOrder({ symbol, side, shares, reason = '', by = 'usuario', 
       return { ok: false, error: `Superaría el límite del ${MAX_POSITION_PCT * 100}% del patrimonio en ${symbol}` };
     }
     const pos = state.positions[symbol] ?? { shares: 0, avgCost: 0, evFrom: Date.now(), evDone: [], evCheckedTo: Date.now() };
+    jb = { sharesBefore: pos.shares, avgBefore: pos.avgCost };
     pos.avgCost = (pos.avgCost * pos.shares + gross + fees) / (pos.shares + shares); // el coste medio incluye los costes de compra
     pos.shares += shares;
     state.positions[symbol] = pos;
@@ -123,6 +131,7 @@ export function placeOrder({ symbol, side, shares, reason = '', by = 'usuario', 
   } else {
     const pos = state.positions[symbol];
     if (!pos || pos.shares < shares) return { ok: false, error: `No tienes ${shares} acciones de ${symbol}` };
+    jb = { sharesBefore: pos.shares, avgBefore: pos.avgCost };
     pos.shares -= shares;
     if (pos.shares === 0) delete state.positions[symbol];
     state.cash += gross - fees;
@@ -133,6 +142,7 @@ export function placeOrder({ symbol, side, shares, reason = '', by = 'usuario', 
     refPrice: +price.toFixed(4), fee: +c.fee.toFixed(2), fxCost: +fxCost.toFixed(2), tax: +taxCost.toFixed(2), slip: +slipCost.toFixed(2), slipBps: c.slipBps,
   };
   state.orders.push(order);
+  try { hooks.onOrder?.(order, { ...jb, fees: c.fee + c.fx + c.tax }); } catch (e) { console.warn('Diario:', e.message); }
   saveSoon();
   return { ok: true, order };
 }
@@ -172,6 +182,7 @@ export function snapshot() {
   if (state.equityCurve.length > 2000) state.equityCurve.shift();
   state.startT ??= Date.now();
   upsertDaily(Date.now(), equity, INITIAL_CASH * (spy / state.spyBase));
+  try { hooks.onTick?.(); } catch (e) { console.warn('Diario:', e.message); }
   // El gráfico se guarda como mucho cada 30 s (las órdenes se guardan al momento);
   // así se evitan escrituras constantes, que molestan a OneDrive.
   if (Date.now() - lastCurveSave > 30000) { lastCurveSave = Date.now(); saveSoon(); }

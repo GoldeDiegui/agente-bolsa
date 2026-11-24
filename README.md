@@ -207,3 +207,13 @@ Tarjeta «Rendimiento» en la web (y `GET /api/performance` en local; en la web 
 - **Operaciones**: % de aciertos, ganancia y pérdida media, factor de beneficio, esperanza por venta, duración media, mejor y peor venta, rotación y costes de operar. El coste medio de cada posición incluye las comisiones de compra.
 - **Aportación**: por valor, sector y mercado (realizado + latente + dividendos, en US$ y en puntos sobre el capital inicial). La suma coincide con la ganancia total; `reconciliation` del informe lo comprueba.
 - Con poco historial la tarjeta lo avisa en lugar de mostrar cifras engañosas.
+
+## Diario de operaciones con autopsia
+
+Tarjeta «Diario de operaciones» en la web (`GET /api/journal` en local; en la web publicada, dentro de `state.json`). Se guarda en el estado de la cartera (`journal`) y se alimenta solo, con cada orden (`journal.js` se engancha a `placeOrder`).
+
+- **Una entrada por posición** (de la primera compra al cierre total). Al comprar guarda la tesis: puntuación, veredicto, componentes, régimen de mercado, VIX, stop y objetivo. Mientras está abierta guarda la máxima ganancia y la máxima pérdida alcanzadas.
+- **Al cerrar**: resultado, duración, comparación con el S&P 500 y autopsia con lecciones (componente más flojo de la tesis, beneficios devueltos, stop demasiado ajustado, venta prematura…).
+- **Seguimiento posterior**: a las 5 y 20 sesiones de vender se mide qué hizo el precio y se recalcula la autopsia. Los valores vendidos hace poco se mantienen en la descarga de precios históricos.
+- **Resumen** (desde 5 operaciones cerradas): resultados por tipo de salida, por puntuación al comprar y por quién decidió, con conclusiones como «los stops parecen demasiado ajustados» o «la puntuación discrimina bien».
+- Las operaciones anteriores al diario se reconstruyen con el historial de órdenes (sin foto de entrada ni recorrido; se marcan como tales).

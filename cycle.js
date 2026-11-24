@@ -12,6 +12,7 @@ import { refreshMacro, macroSummary } from './macro.js';
 import { refreshTech, exportCharts, techCount } from './technicals.js';
 import { dailySummary } from './daily.js';
 import { performanceReport } from './performance.js';
+import { journalReport, refreshPostExit, recentClosedSymbols } from './journal.js';
 import { refreshVolatility, refreshRegime, regimeSummary } from './volatility.js';
 import { runFundamentalsBudget, flushFundamentals, fundamentalsStats, hasFinnhub, exportStatements } from './fundamentals.js';
 import { analyze, brief, rank, shortlist, analysisCoverage } from './analysis.js';
@@ -63,9 +64,10 @@ try {
 
   // 2c) Señales de precio (momentum, medias, RSI) y serie de cierres para el gráfico: todo el universo en el ciclo de datos
   {
-    const syms = mode === 'trade' ? [...getWatchedSymbols(), ...worklist.getShortlist()] : UNIVERSE.map((u) => u.symbol);
+    const syms = mode === 'trade' ? [...getWatchedSymbols(), ...worklist.getShortlist(), ...recentClosedSymbols()] : UNIVERSE.map((u) => u.symbol);
     const t = await refreshTech(syms, mode === 'trade' ? { budgetMs: 20000, ttlMs: 6 * 3600e3 } : { budgetMs: Number(process.env.TECH_BUDGET_SECONDS || 90) * 1000 });
     log(`Precios históricos: ${t.done} descargas · señales de precio en ${techCount()} valores`);
+    const pe = refreshPostExit(); if (pe) log(`Diario: ${pe} autopsias actualizadas con el precio posterior a la venta`);
   }
 
   // 3) Splits y dividendos de lo que tengo (antes de decidir nada, para que los precios y las acciones cuadren)
@@ -138,7 +140,7 @@ function exportSite() {
     updatedAt: now, mode, agentMode: agentMode(), agentEnabled: true,
     markets: Object.fromEntries(Object.keys(MARKETS).map((k) => [k, { open: marketClock(k, now).open, schedule: scheduleText(k) }])),
     quotes: getAllQuotes().filter((q) => q.price != null).map((q) => ({ symbol: q.symbol, name: q.name, sector: q.sector, market: q.market, currency: q.currency, price: q.price, priceNative: q.priceNative, changePct: q.changePct, source: q.source })),
-    market: marketStats(), analysis: analysisCoverage(), portfolio: s, risk: getRisk(), regime: regimeSummary(), macro: macroSummary(), daily: dailySummary(), performance: performanceReport(),
+    market: marketStats(), analysis: analysisCoverage(), portfolio: s, risk: getRisk(), regime: regimeSummary(), macro: macroSummary(), daily: dailySummary(), performance: performanceReport(), journal: journalReport(),
     orders: getOrders().slice(0, 300), events: getEvents().slice(0, 100), pending: getPending(),
     curve: curve.filter((_, i) => i % step === 0 || i === curve.length - 1),
     agentLog: getAgentLog(), scorecard: scoreSummary(), opportunities, analyses, data: fundamentalsStats(),
