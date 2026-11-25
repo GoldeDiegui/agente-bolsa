@@ -1,0 +1,58 @@
+# Copia de seguridad diaria del estado de la cartera (rama "estado") en la rama "copias".
+# Se guardan 30 días de copias diarias y 26 semanales. Si el estado está dañado, este flujo sale en rojo.
+name: Copias de seguridad
+
+on:
+  schedule:
+    - cron: '15 22 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Comparte turno con el gestor para no leer el estado a medio escribir
+concurrency:
+  group: gestor
+  cancel-in-progress: false
+
+jobs:
+  copia:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Recuperar el estado y las copias
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          if ! git ls-remote --exit-code --heads "$REMOTE" estado >/dev/null 2>&1; then echo "Aún no hay rama estado: nada que copiar."; echo "SIN_ESTADO=1" >> "$GITHUB_ENV"; exit 0; fi
+          git clone --quiet --depth 1 --branch estado "$REMOTE" estado
+          if git ls-remote --exit-code --heads "$REMOTE" copias >/dev/null 2>&1; then
+            git clone --quiet --depth 1 --branch copias "$REMOTE" copias
+          else
+            mkdir -p copias
+            git -C copias init --quiet -b copias
+            git -C copias remote add origin "$REMOTE"
+          fi
+
+      - name: Hacer la copia
+        if: env.SIN_ESTADO != '1'
+        run: node copias.js copiar estado copias
+
+      - name: Guardar las copias
+        if: env.SIN_ESTADO != '1'
+        working-directory: copias
+        run: |
+          git config user.name "gestor-bot"
+          git config user.email "gestor-bot@users.noreply.github.com"
+          git add -A
+          if git rev-parse --verify HEAD >/dev/null 2>&1 && [ -z "$(git status --porcelain)" ]; then echo "Sin cambios."; exit 0; fi
+          MSG="Copias $(date -u +'%Y-%m-%d %H:%M') UTC"
+          if git rev-parse --verify HEAD >/dev/null 2>&1; then git commit --quiet --amend -m "$MSG"; else git commit --quiet -m "$MSG"; fi
+          git push --quiet --force origin HEAD:copias
