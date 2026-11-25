@@ -1,3 +1,4 @@
+# Publica la web (carpeta public/) en https://TU_USUARIO.github.io/TU_REPOSITORIO/
 name: Publicar web
 
 on:
@@ -27,5 +28,8 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public
+          name: web-${{ github.run_id }}-${{ github.run_attempt }}
       - id: despliegue
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: web-${{ github.run_id }}-${{ github.run_attempt }}
