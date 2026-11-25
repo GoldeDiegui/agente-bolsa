@@ -1,0 +1,61 @@
+# Vuelve el estado de la cartera a una copia de seguridad (rama "copias").
+# Uso: Actions → «Restaurar copia» → Run workflow → fecha AAAA-MM-DD (o «ultima»). Antes de restaurar se guarda lo actual en copias/previas.
+name: Restaurar copia
+
+on:
+  workflow_dispatch:
+    inputs:
+      fecha:
+        description: 'Fecha de la copia (AAAA-MM-DD) o "ultima"'
+        type: string
+        default: ultima
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gestor
+  cancel-in-progress: false
+
+jobs:
+  restaurar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Recuperar estado y copias
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          git ls-remote --exit-code --heads "$REMOTE" copias >/dev/null 2>&1 || { echo "::error::No existe la rama copias: todavía no hay copias."; exit 1; }
+          git clone --quiet --depth 1 --branch copias "$REMOTE" copias
+          if git ls-remote --exit-code --heads "$REMOTE" estado >/dev/null 2>&1; then
+            git clone --quiet --depth 1 --branch estado "$REMOTE" estado
+          else
+            mkdir -p estado/data
+            git -C estado init --quiet -b estado
+            git -C estado remote add origin "$REMOTE"
+          fi
+
+      - name: Restaurar
+        env:
+          FECHA: ${{ inputs.fecha }}
+        run: node copias.js restaurar copias estado "$FECHA"
+
+      - name: Guardar el estado restaurado y la copia previa
+        run: |
+          git config --global user.name "gestor-bot"
+          git config --global user.email "gestor-bot@users.noreply.github.com"
+          cd copias && git add -A
+          if ! git diff --cached --quiet; then git commit --quiet --amend -m "Copias (previa a restaurar) $(date -u +'%Y-%m-%d %H:%M') UTC"; git push --quiet --force origin HEAD:copias; fi
+          cd ../estado && git add -A
+          if git diff --cached --quiet; then echo "La copia coincide con el estado actual."; exit 0; fi
+          MSG="Estado restaurado $(date -u +'%Y-%m-%d %H:%M') UTC"
+          if git rev-parse --verify HEAD >/dev/null 2>&1; then git commit --quiet --amend -m "$MSG"; else git commit --quiet -m "$MSG"; fi
+          git push --quiet --force origin HEAD:estado
