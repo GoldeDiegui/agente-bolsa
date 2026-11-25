@@ -3,20 +3,23 @@
 // COST_MODEL=simple vuelve al modelo antiguo (1 US$ por orden, sin nada más). Todo configurable por variables de entorno.
 import { getTech } from './technicals.js';
 import { getVol } from './volatility.js';
+import { M } from './mandato.js';
 
+// prioridad: variable de entorno > mandato.json > valor por defecto
 const num = (name, def) => { const v = Number(process.env[name]); return Number.isFinite(v) && process.env[name] !== '' && process.env[name] != null ? v : def; };
-export const SIMPLE = (process.env.COST_MODEL || 'realista') === 'simple';
+const K = M.costes;
+export const SIMPLE = (process.env.COST_MODEL || M.costes.modelo) === 'simple';
 
 export const COST = {
-  usPerShare: num('COST_US_PER_SHARE', 0.005), usMin: num('COST_US_MIN', 1), usMaxPct: num('COST_US_MAX_PCT', 1), // EE. UU.: 0,005 US$/acción, mín. 1 US$, máx. 1 %
-  esPct: num('COST_ES_PCT', 0.10), esMin: num('COST_ES_MIN', 2),                                                  // España: 0,10 %, mín. 2 US$ equivalentes
-  fxBps: num('COST_FX_BPS', 15),            // cambio EUR↔USD: 0,15 % en cada operación del IBEX
-  itfEsPct: num('COST_ITF_ES_PCT', 0.2),    // impuesto sobre transacciones financieras: 0,2 % en las compras de acciones españolas grandes
-  maxPartPct: num('COST_MAX_PARTICIPATION_PCT', 5), // una orden no puede superar el 5 % del volumen diario medio
-  impactK: num('COST_IMPACT_K', 0.5),       // impacto de mercado ≈ k · volatilidad diaria · √(participación)
-  slipCapBps: num('COST_SLIP_CAP_BPS', 100),
-  divTaxUS: num('DIV_TAX_US', 15),          // retención en origen sobre dividendos de EE. UU. (con convenio, W-8BEN)
-  divTaxES: num('DIV_TAX_ES', 19),          // retención sobre dividendos españoles
+  usPerShare: num('COST_US_PER_SHARE', K.usPerShare), usMin: num('COST_US_MIN', K.usMin), usMaxPct: num('COST_US_MAX_PCT', K.usMaxPct), // EE. UU.: 0,005 US$/acción, mín. 1 US$, máx. 1 %
+  esPct: num('COST_ES_PCT', K.esPct), esMin: num('COST_ES_MIN', K.esMin),                                                  // España: 0,10 %, mín. 2 US$ equivalentes
+  fxBps: num('COST_FX_BPS', K.fxBps),            // cambio EUR↔USD: 0,15 % en cada operación del IBEX
+  itfEsPct: num('COST_ITF_ES_PCT', K.itfEsPct),    // impuesto sobre transacciones financieras: 0,2 % en las compras de acciones españolas grandes
+  maxPartPct: num('COST_MAX_PARTICIPATION_PCT', K.maxParticipationPct), // una orden no puede superar el 5 % del volumen diario medio
+  impactK: num('COST_IMPACT_K', K.impactK),       // impacto de mercado ≈ k · volatilidad diaria · √(participación)
+  slipCapBps: num('COST_SLIP_CAP_BPS', K.slipCapBps),
+  divTaxUS: num('DIV_TAX_US', K.divTaxUS),          // retención en origen sobre dividendos de EE. UU. (con convenio, W-8BEN)
+  divTaxES: num('DIV_TAX_ES', K.divTaxES),          // retención sobre dividendos españoles
 };
 
 // Semi-diferencial en puntos básicos según el volumen diario negociado (en US$)

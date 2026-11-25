@@ -8,6 +8,7 @@ import { analyze } from './analysis.js';
 import { stopFor, takeProfitFor, regimeFor } from './volatility.js';
 import { stressInfo } from './macro.js';
 import { getSeries } from './technicals.js';
+import { M } from './mandato.js';
 
 const DAY = 86400e3;
 const r = (v, d = 1) => (v == null || !Number.isFinite(v) ? null : +v.toFixed(d));
@@ -16,7 +17,7 @@ const pct = (v) => `${v > 0 ? '+' : ''}${String(r(v)).replace('.', ',')} %`;
 
 export const EXIT_KINDS = {
   stop: 'Stop-loss', target: 'Toma de beneficios', rebalance: 'Rebalanceo', thesis: 'Tesis rota', overvalued: 'Sobrevalorada',
-  risk: 'Titulares de riesgo', rotation: 'Rotación', manual: 'Manual',
+  risk: 'Titulares de riesgo', rotation: 'Rotación', mandate: 'Fuera del mandato', manual: 'Manual',
 };
 export function exitKind(reason = '', by = '') {
   const t = String(reason);
@@ -27,6 +28,7 @@ export function exitKind(reason = '', by = '') {
   if (/^Sobrevalorada/i.test(t)) return 'overvalued';
   if (/^Varios titulares de riesgo/i.test(t)) return 'risk';
   if (/^Rotaci[oó]n/i.test(t)) return 'rotation';
+  if (/^Fuera del mandato/i.test(t)) return 'mandate';
   return 'manual';
 }
 
@@ -40,7 +42,7 @@ function entrySnapshot(order, market) {
   const spy = getQuote('SPY')?.price ?? null;
   return {
     t: order.t, price: order.price, score: a?.score ?? null, verdict: a?.verdict ?? null, scores: sc, confidence: a?.confidence ?? null,
-    reason: order.reason, by: order.by, regime: reg?.state ?? null, stress: st?.level ?? null, vix: st?.vix ?? null,
+    reason: order.reason, by: order.by, mandate: `${M.nombre} v${M.version}`, regime: reg?.state ?? null, stress: st?.level ?? null, vix: st?.vix ?? null,
     stopPct: stopFor(order.symbol).stopPct, targetPct: takeProfitFor(order.symbol), spy,
   };
 }

@@ -4,6 +4,7 @@ import { UNIVERSE, getQuote } from './market.js';
 import { getFundamentals, getNews, getEstimates, getNextEarnings, getInsiders, getOwnership, fundamentalsStats } from './fundamentals.js';
 import { getTech } from './technicals.js';
 import { sourceWeight } from './news.js';
+import { M, weights } from './mandato.js';
 
 const BY = new Map(UNIVERSE.map((u) => [u.symbol, u]));
 const DAY = 86400e3;
@@ -304,9 +305,7 @@ export function shortScore(o) {
 
 // ---------- análisis completo ----------
 // Pesos relativos (se normalizan a 1): fundamentales ≈ 70 %, momentum ≈ 10 %, directivos ≈ 5 %, resto de señales de mercado
-const W_RAW = { valuation: 27, growth: 22, quality: 18, analysts: 8, earnings: 8, revisions: 12, sentiment: 5, momentum: 12, insiders: 6, shorts: 4 };
-const W_SUM = Object.values(W_RAW).reduce((a, b) => a + b, 0);
-const WEIGHTS = Object.fromEntries(Object.entries(W_RAW).map(([k, v]) => [k, v / W_SUM]));
+const WEIGHTS = weights(); // pesos del mandato, normalizados para sumar 1
 const memo = new Map();
 
 export function analyze(symbol) {
@@ -367,9 +366,9 @@ function compute(u) {
 
   let verdict;
   if (confidence < 0.45 || (scores.valuation == null && scores.growth == null)) verdict = 'Sin datos suficientes';
-  else if (score <= 38) verdict = 'Evitar';
-  else if (scores.valuation != null && scores.valuation <= 30 && score < 75) verdict = 'Cara';
-  else if (score >= 66 && (scores.valuation == null || scores.valuation >= 45)) verdict = 'Atractiva';
+  else if (score <= M.veredictos.avoidMax) verdict = 'Evitar';
+  else if (scores.valuation != null && scores.valuation <= M.veredictos.expensiveValuationMax && score < M.veredictos.expensiveMaxScore) verdict = 'Cara';
+  else if (score >= M.veredictos.attractiveMin && (scores.valuation == null || scores.valuation >= M.veredictos.attractiveMinValuation)) verdict = 'Atractiva';
   else verdict = 'Neutral';
   if ((verdict === 'Atractiva' || verdict === 'Neutral') && news && news.red >= 1) verdict = 'Precaución';
 

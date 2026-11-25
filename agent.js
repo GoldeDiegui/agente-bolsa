@@ -1,6 +1,6 @@
 // Agente gestor: usa la API de Claude con herramientas para consultar el mercado y operar la cartera virtual.
 import { getAllQuotes, getQuote, getHistory } from './market.js';
-import { placeOrder, getSummary, getRisk, getOrders, addLimitOrder, getPending } from './portfolio.js';
+import { placeOrder, getSummary, getRisk, getOrders, addLimitOrder, getPending, INITIAL_CASH } from './portfolio.js';
 import { analyze, rank } from './analysis.js';
 import { getNews } from './fundamentals.js';
 import { ruleChat, autonomousReview as ruleReview } from './rules.js';
@@ -17,7 +17,7 @@ if (process.env.ANTHROPIC_API_KEY) {
   }
 }
 
-const SYSTEM = `Eres un gestor de carteras con sólidos conocimientos de bolsa y mercados de valores. Gestionas una cartera VIRTUAL de simulación (dinero ficticio, 100.000 USD iniciales) y tienes autonomía para comprar y vender.
+const SYSTEM = `Eres un gestor de carteras con sólidos conocimientos de bolsa y mercados de valores. Gestionas una cartera VIRTUAL de simulación (dinero ficticio, ${INITIAL_CASH.toLocaleString('es-ES')} USD iniciales) y tienes autonomía para comprar y vender.
 
 Principios:
 - Puedes operar con el S&P 500 y el IBEX 35 (los valores del IBEX cotizan en EUR y la cartera los valora en USD).

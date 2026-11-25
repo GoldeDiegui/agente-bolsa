@@ -10,6 +10,7 @@ import { refreshTech, ensureTech, getTech } from './technicals.js';
 import { refreshMacro, macroSummary } from './macro.js';
 import { dailySummary } from './daily.js';
 import { performanceReport } from './performance.js';
+import { mandateInfo } from './mandato.js';
 import { journalReport, refreshPostExit, recentClosedSymbols } from './journal.js';
 import { refreshVolatility, refreshRegime } from './volatility.js';
 import { maybeSnapshot, evaluate, summary as scoreSummary } from './scorecard.js';
@@ -87,6 +88,7 @@ app.get('/api/chart/:symbol', async (req, res) => {
   catch (e) { res.status(502).json({ error: e.message }); }
 });
 app.get('/api/macro', (_req, res) => res.json(macroSummary()));
+app.get('/api/mandate', (_req, res) => res.json(mandateInfo()));
 app.get('/api/journal', (_req, res) => res.json(journalReport()));
 app.get('/api/performance', (_req, res) => res.json(performanceReport()));
 app.get('/api/daily', (_req, res) => res.json(dailySummary()));

@@ -186,7 +186,7 @@ export function performanceReport(now = Date.now()) {
   });
 
   return {
-    asOf: now, since: start, curve: cs, trades: ts, bySymbol, bySector: byKey('sector'), byMarket: marketCompare,
+    asOf: now, since: start, initialCash: INITIAL_CASH, curve: cs, trades: ts, bySymbol, bySector: byKey('sector'), byMarket: marketCompare,
     // la suma de lo aportado por cada valor debe coincidir con la ganancia total (ver prueba)
     reconciliation: { attributedUsd: r(attributed, 2), pnlUsd: r(sum.equity - INITIAL_CASH, 2), diffUsd: r(attributed - (sum.equity - INITIAL_CASH), 2) },
     notes: notesFor(cs, ts),

@@ -228,3 +228,15 @@ La rama `estado` se reescribe en cada ciclo (un solo commit), así que no guarda
 - Si `state.json` está dañado, el flujo sale en rojo y no copia.
 
 **Restaurar**: Actions → «Restaurar copia» → Run workflow → fecha `AAAA-MM-DD` (o `ultima`). Valida la copia, guarda lo que había en `copias/previas/` (últimas 10) y la deja como estado. La web se actualiza en el siguiente ciclo. En local: `node copias.js restaurar <carpeta copias> <carpeta estado> [fecha]`.
+
+## Mandato (`mandato.json`)
+
+Todos los parámetros del gestor están en un único fichero, `mandato.json`, en la raíz del repositorio (editable desde la web de GitHub). Lo que borres o dejes igual usa el valor por defecto. La web muestra el mandato activo, qué difiere de los valores por defecto y los avisos.
+
+- **Secciones**: `capital`, `universo` (mercados permitidos, símbolos y sectores excluidos), `riesgo` (límites por valor, sector y nº de posiciones; stop-loss; objetivo de beneficios; tamaños), `efectivo`, `mercado` (VIX y reducciones en cautela/bajista), `compras`, `veredictos`, `ventas`, `rotacion`, `analisis`, `pesos` (del modelo de puntuación; se normalizan) y `costes`. `node mandato.js parametros` lista todos con rango y descripción.
+- **A prueba de errores**: un valor fuera de rango o mal escrito se ignora y se usa el de por defecto; una clave desconocida (errata) se avisa; nada rompe el ciclo. Los avisos salen en la web y como aviso amarillo en Actions. Las claves que empiezan por `_` son comentarios.
+- **Validar antes de subir**: `node mandato.js` (o `MANDATE_FILE=otro.json node mandato.js`). Termina con error si hay avisos.
+- **Qué hace nuevo**: si una posición deja de encajar (mercado, símbolo o sector excluidos), el gestor la vende con el motivo «Fuera del mandato». También `riesgo.maxPositions` y `riesgo.sectorMaxPct` limitan las compras.
+- **Capital inicial**: solo se aplica al crear o reiniciar la cartera (se guarda en el estado). Cambiarlo con la cartera en marcha no altera la actual.
+- **Versionado**: sube `version` (y cambia `nombre`) cuando cambies parámetros; el diario guarda con qué mandato se hizo cada compra.
+- Las variables de entorno antiguas (`COST_*`, `ROTATION_GAP`, `MIN_COVERAGE`…) siguen funcionando y tienen prioridad sobre el fichero.

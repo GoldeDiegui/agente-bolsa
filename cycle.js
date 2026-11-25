@@ -12,6 +12,8 @@ import { refreshMacro, macroSummary } from './macro.js';
 import { refreshTech, exportCharts, techCount } from './technicals.js';
 import { dailySummary } from './daily.js';
 import { performanceReport } from './performance.js';
+import { mandateInfo } from './mandato.js';
+for (const w of mandateInfo().warnings) console.log(`::warning title=mandato.json::${w}`); // aparece como aviso amarillo en Actions
 import { journalReport, refreshPostExit, recentClosedSymbols } from './journal.js';
 import { refreshVolatility, refreshRegime, regimeSummary } from './volatility.js';
 import { runFundamentalsBudget, flushFundamentals, fundamentalsStats, hasFinnhub, exportStatements } from './fundamentals.js';
@@ -140,7 +142,7 @@ function exportSite() {
     updatedAt: now, mode, agentMode: agentMode(), agentEnabled: true,
     markets: Object.fromEntries(Object.keys(MARKETS).map((k) => [k, { open: marketClock(k, now).open, schedule: scheduleText(k) }])),
     quotes: getAllQuotes().filter((q) => q.price != null).map((q) => ({ symbol: q.symbol, name: q.name, sector: q.sector, market: q.market, currency: q.currency, price: q.price, priceNative: q.priceNative, changePct: q.changePct, source: q.source })),
-    market: marketStats(), analysis: analysisCoverage(), portfolio: s, risk: getRisk(), regime: regimeSummary(), macro: macroSummary(), daily: dailySummary(), performance: performanceReport(), journal: journalReport(),
+    market: marketStats(), analysis: analysisCoverage(), portfolio: s, risk: getRisk(), regime: regimeSummary(), macro: macroSummary(), daily: dailySummary(), performance: performanceReport(), journal: journalReport(), mandate: mandateInfo(),
     orders: getOrders().slice(0, 300), events: getEvents().slice(0, 100), pending: getPending(),
     curve: curve.filter((_, i) => i % step === 0 || i === curve.length - 1),
     agentLog: getAgentLog(), scorecard: scoreSummary(), opportunities, analyses, data: fundamentalsStats(),

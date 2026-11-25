@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { M } from './mandato.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FILE = process.env.MACRO_FILE
@@ -47,7 +48,7 @@ export function computeIndicator(def, closes) {
   return { last: r(last, def.dec + 1), chg1d: r(chg(1)), chg1m: r(chg(21)), chg3m: r(chg(63)), hi: r(Math.max(...yr), def.dec + 1), lo: r(Math.min(...yr), def.dec + 1), avg1y: r(yr.reduce((a, b) => a + b, 0) / yr.length, def.dec + 1) };
 }
 
-export function stressFromVix(vix) { return vix == null ? null : vix >= 30 ? 'alta' : vix >= 25 ? 'elevada' : 'normal'; }
+export function stressFromVix(vix) { return vix == null ? null : vix >= M.mercado.vixHigh ? 'alta' : vix >= M.mercado.vixElevated ? 'elevada' : 'normal'; }
 
 export async function refreshMacro({ force = false } = {}) {
   if (!force && Date.now() - cache.t < TTL) return { fetched: 0 };

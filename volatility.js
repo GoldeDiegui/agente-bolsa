@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { UNIVERSE } from './market.js';
 import { stressInfo } from './macro.js';
+import { M } from './mandato.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FILE = process.env.VOL_FILE
@@ -16,12 +17,7 @@ const RETRY_TTL = 2 * HOUR;
 const BY = new Map(UNIVERSE.map((u) => [u.symbol, u]));
 
 // ---- parámetros del modelo (todos explicables) ----
-export const BASE_STOP_PCT = 8;      // stop de referencia si aún no hay datos de volatilidad
-export const STOP_ATR_MULT = 3.5;    // stop = 3,5 × ATR(14) en % del precio...
-export const STOP_MIN_PCT = 6;       // ...con suelo del 6 %
-export const STOP_MAX_PCT = 15;      // ...y techo del 15 %
-export const TARGET_ATR_PCT = 2.5;   // un valor con ATR 2,5 % recibe el tamaño normal; más volátil, menos; más tranquilo, algo más
-export const SIZE_MIN = 0.5, SIZE_MAX = 1.2;
+// Todos los umbrales (stop, objetivo, tamaños, régimen y colchón de efectivo) vienen del mandato (mandato.json).
 const REGIME_INDEX = { 'S&P 500': '^GSPC', 'IBEX 35': '^IBEX' };
 
 const cache = { vol: {}, regime: {} };
@@ -123,15 +119,16 @@ export const getVol = (symbol) => { const e = cache.vol[symbol]; return e?.atrPc
 // Stop-loss del valor: múltiplo de su ATR, entre el 6 % y el 15 %. Sin datos, el 8 % de siempre.
 export function stopFor(symbol) {
   const v = getVol(symbol);
-  const pct = v ? Math.min(STOP_MAX_PCT, Math.max(STOP_MIN_PCT, STOP_ATR_MULT * v.atrPct)) : BASE_STOP_PCT;
+  const R = M.riesgo;
+  const pct = v ? Math.min(R.stopMaxPct, Math.max(R.stopMinPct, R.stopAtrMult * v.atrPct)) : R.baseStopPct;
   return { stopPct: -+pct.toFixed(1), atrPct: v?.atrPct ?? null };
 }
 // Toma de beneficios: el doble del riesgo asumido (mínimo el 15 %)
-export const takeProfitFor = (symbol) => (getVol(symbol) ? Math.max(15, +(2 * Math.abs(stopFor(symbol).stopPct)).toFixed(1)) : 15);
+export const takeProfitFor = (symbol) => (getVol(symbol) ? Math.max(M.riesgo.takeProfitMinPct, +(M.riesgo.takeProfitRiskMultiple * Math.abs(stopFor(symbol).stopPct)).toFixed(1)) : M.riesgo.takeProfitMinPct);
 // Factor de tamaño de la compra: más pequeña cuanto más volátil
 export function sizeFactor(symbol) {
   const v = getVol(symbol);
-  return v ? Math.min(SIZE_MAX, Math.max(SIZE_MIN, TARGET_ATR_PCT / v.atrPct)) : 1;
+  return v ? Math.min(M.riesgo.sizeMax, Math.max(M.riesgo.sizeMin, M.riesgo.targetAtrPct / v.atrPct)) : 1;
 }
 
 export const regimeFor = (market) => { const r = cache.regime[market]; return r?.state ? r : null; };
@@ -139,20 +136,22 @@ const REGIME_TEXT = { alcista: 'por encima de sus medias de 50 y 200 sesiones', 
 export const regimeText = (market) => { const r = regimeFor(market); return r ? `${market} ${REGIME_TEXT[r.state]} (${r.vs200Pct > 0 ? '+' : ''}${String(r.vs200Pct).replace('.', ',')} % frente a su media de 200)` : null; };
 
 // Reglas según el régimen del mercado del valor: en el bajista solo compra con convicción alta y a medio tamaño.
-export const BEAR_MIN_SCORE = 80;
+export const bearMinScore = () => M.mercado.bearMinScore;
 // Además, una tensión alta en el mercado (VIX ≥ 25: elevada, ≥ 30: alta) reduce el tamaño aunque la tendencia sea alcista.
 export function regimeGate(market, score) {
   const r = regimeFor(market), st = stressInfo()?.level;
-  const stressMult = st === 'alta' ? 0.6 : st === 'elevada' ? 0.75 : 1;
-  if (r?.state === 'bajista') return { ok: score != null && score >= BEAR_MIN_SCORE, mult: +(0.5 * (st === 'alta' ? 0.8 : 1)).toFixed(2), state: 'bajista' };
-  const mult = Math.min(r?.state === 'cautela' ? 0.75 : 1, stressMult);
+  const K = M.mercado;
+  const stressMult = st === 'alta' ? K.stressHighSizeMult : st === 'elevada' ? K.stressElevatedSizeMult : 1;
+  if (r?.state === 'bajista') return { ok: score != null && score >= K.bearMinScore, mult: +(K.bearSizeMult * (st === 'alta' ? 0.8 : 1)).toFixed(2), state: 'bajista' };
+  const mult = Math.min(r?.state === 'cautela' ? K.cautionSizeMult : 1, stressMult);
   return { ok: true, mult, state: mult < 1 ? 'cautela' : r?.state ?? null };
 }
 // Colchón de efectivo: 15 % normal, 20 % en cautela, 25 % en mercado bajista (según el S&P 500, que pesa más en la cartera)
-export function cashFloorPct(base = 15) {
+export function cashFloorPct(base = M.efectivo.floorPct) {
   const s = regimeFor('S&P 500')?.state, st = stressInfo()?.level;
-  const byTrend = s === 'bajista' ? 25 : s === 'cautela' ? 20 : base;
-  const byStress = st === 'alta' ? 25 : st === 'elevada' ? 20 : base;
+  const E = M.efectivo;
+  const byTrend = s === 'bajista' ? E.floorBearPct : s === 'cautela' ? E.floorCautionPct : base;
+  const byStress = st === 'alta' ? E.floorStressHighPct : st === 'elevada' ? E.floorStressElevatedPct : base;
   return Math.max(base, byTrend, byStress);
 }
 export const regimeSummary = () => ({

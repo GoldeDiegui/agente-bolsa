@@ -1,0 +1,108 @@
+{
+  "_ayuda": "Cambia solo los valores que quieras. Los que borres o dejes igual usan el valor por defecto. Las claves que empiezan por _ son comentarios. Valida con: node mandato.js",
+  "nombre": "Mandato base",
+  "version": 1,
+  "capital": {
+    "initialCash": 100000
+  },
+  "universo": {
+    "markets": [
+      "S&P 500",
+      "IBEX 35"
+    ],
+    "excludedSymbols": [],
+    "excludedSectors": []
+  },
+  "riesgo": {
+    "maxPositionPct": 30,
+    "overweightPct": 25,
+    "targetWeightPct": 20,
+    "maxPositions": 0,
+    "sectorMaxPct": 100,
+    "baseStopPct": 8,
+    "stopAtrMult": 3.5,
+    "stopMinPct": 6,
+    "stopMaxPct": 15,
+    "takeProfitMinPct": 15,
+    "takeProfitRiskMultiple": 2,
+    "takeProfitSellPct": 50,
+    "targetAtrPct": 2.5,
+    "sizeMin": 0.5,
+    "sizeMax": 1.2
+  },
+  "efectivo": {
+    "floorPct": 15,
+    "floorCautionPct": 20,
+    "floorBearPct": 25,
+    "floorStressElevatedPct": 20,
+    "floorStressHighPct": 25
+  },
+  "mercado": {
+    "vixElevated": 25,
+    "vixHigh": 30,
+    "cautionSizeMult": 0.75,
+    "bearSizeMult": 0.5,
+    "stressElevatedSizeMult": 0.75,
+    "stressHighSizeMult": 0.6,
+    "bearMinScore": 80
+  },
+  "compras": {
+    "entryPct": 8,
+    "convictionFloorScore": 66,
+    "convictionSpan": 24,
+    "maxPerReview": 3,
+    "minConfidence": 0.5,
+    "minHoldHours": 24,
+    "maxDayRisePct": 10,
+    "maxDayFallPct": 5,
+    "maxExistingWeightPct": 15
+  },
+  "veredictos": {
+    "attractiveMin": 66,
+    "attractiveMinValuation": 45,
+    "avoidMax": 38,
+    "expensiveValuationMax": 30,
+    "expensiveMaxScore": 75
+  },
+  "ventas": {
+    "expensiveGainPct": 10,
+    "redFlagsToReduce": 2
+  },
+  "rotacion": {
+    "gap": 12,
+    "minHoldDays": 3,
+    "maxPerDay": 2,
+    "sectorMaxPct": 35
+  },
+  "analisis": {
+    "minCoverage": 0.35,
+    "allowMomentumOnly": false
+  },
+  "pesos": {
+    "valuation": 27,
+    "growth": 22,
+    "quality": 18,
+    "analysts": 8,
+    "earnings": 8,
+    "revisions": 12,
+    "sentiment": 5,
+    "momentum": 12,
+    "insiders": 6,
+    "shorts": 4
+  },
+  "costes": {
+    "modelo": "realista",
+    "usPerShare": 0.005,
+    "usMin": 1,
+    "usMaxPct": 1,
+    "esPct": 0.1,
+    "esMin": 2,
+    "fxBps": 15,
+    "itfEsPct": 0.2,
+    "maxParticipationPct": 5,
+    "impactK": 0.5,
+    "slipCapBps": 100,
+    "divTaxUS": 15,
+    "divTaxES": 19
+  }
+}

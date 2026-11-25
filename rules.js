@@ -7,23 +7,24 @@ import { openMarkets, ENFORCE } from './hours.js';
 import { analyze, analysisText, rank, analysisCoverage, thesisLine, worstLine } from './analysis.js';
 import { fundamentalsStats, hasFinnhub } from './fundamentals.js';
 import { stressInfo } from './macro.js';
-import { stopFor, takeProfitFor, sizeFactor, regimeGate, regimeText, regimeFor, cashFloorPct, BEAR_MIN_SCORE } from './volatility.js';
+import { stopFor, takeProfitFor, sizeFactor, regimeGate, regimeText, regimeFor, cashFloorPct, bearMinScore } from './volatility.js';
+import { M, allowedByMandate } from './mandato.js';
 
 const BY = 'agente (reglas)';
-const OVERWEIGHT_PCT = 25;     // recorta si un valor pesa más de un 25 %
-const TARGET_WEIGHT_PCT = 20;  // ...hasta dejarlo en un 20 %
-const BASE_CASH_FLOOR_PCT = 15; // colchón de efectivo normal (sube a 20/25 % si el mercado se debilita)
-const ENTRY_PCT = 8;           // compra "base" ≈ 8 % del patrimonio (4,8 %-11,2 % según convicción)
-const MAX_BUYS_PER_REVIEW = 3;
-const MIN_CONFIDENCE = 0.5;    // el análisis debe cubrir al menos la mitad del modelo
-const MIN_COVERAGE = Number(process.env.MIN_COVERAGE ?? 0.35); // hasta tener analizado este % del universo no se compara con el sector ni se opera por tesis
-const MIN_HOLD_MS = 24 * 3600e3; // no vende por tesis en las primeras 24 h (evita comprar y vender seguido)
-// Rotación: con la cartera llena, cambia la posición más débil por una candidata claramente mejor
-const ROTATION_GAP = Number(process.env.ROTATION_GAP ?? 12);          // puntos de ventaja mínimos de la candidata
-const ROTATION_MIN_HOLD_MS = 3 * 24 * 3600e3;                         // una posición comprada por rotación no se rota en 3 días
-const MAX_ROTATIONS_PER_DAY = 2;
-const ROTATION_SECTOR_MAX = 35;                                       // la rotación no deja un sector por encima de este % de la cartera
-const ALLOW_MOMENTUM_ONLY = process.env.ALLOW_MOMENTUM_ONLY === '1'; // sin datos fundamentales, operar solo por tendencia
+// Los parámetros (límites, tamaños, rotación, umbrales) vienen del mandato (mandato.json); aquí solo se leen.
+const OVERWEIGHT_PCT = () => M.riesgo.overweightPct;
+const TARGET_WEIGHT_PCT = () => M.riesgo.targetWeightPct;
+const ENTRY_PCT = () => M.compras.entryPct;
+const MAX_BUYS_PER_REVIEW = () => M.compras.maxPerReview;
+const MIN_CONFIDENCE = () => M.compras.minConfidence;
+const MIN_COVERAGE = Number(process.env.MIN_COVERAGE ?? M.analisis.minCoverage); // hasta tener analizado este % del universo no se compara con el sector ni se opera por tesis
+const MIN_HOLD_MS = () => M.compras.minHoldHours * 3600e3; // no vende por tesis en las primeras horas (evita comprar y vender seguido)
+const ROTATION_GAP = () => Number(process.env.ROTATION_GAP ?? M.rotacion.gap);
+const ROTATION_MIN_HOLD_MS = () => M.rotacion.minHoldDays * 24 * 3600e3;
+const MAX_ROTATIONS_PER_DAY = () => M.rotacion.maxPerDay;
+const ROTATION_SECTOR_MAX = () => Math.min(M.rotacion.sectorMaxPct, M.riesgo.sectorMaxPct);
+const ALLOW_MOMENTUM_ONLY = () => process.env.ALLOW_MOMENTUM_ONLY === '1' || M.analisis.allowMomentumOnly; // sin datos fundamentales, operar solo por tendencia
+const dec = (v) => String(v).replace('.', ',');
 
 const usd = (n) => n.toLocaleString('es-ES', { style: 'currency', currency: 'USD' });
 const pct = (n) => (n > 0 ? '+' : '') + n.toFixed(2) + '%';
@@ -43,7 +44,8 @@ const suspectSplit = (p) => { const r = p.price / p.avgCost; return r < 0.65 && 
 
 // Revisión autónoma: riesgo, tesis de las posiciones abiertas y compras con fundamento.
 export function autonomousReview() {
-  const CASH_FLOOR_PCT = cashFloorPct(BASE_CASH_FLOOR_PCT); // según el régimen del S&P 500
+  const CASH_FLOOR_PCT = cashFloorPct(); // según el régimen del S&P 500
+  let mandateBlocked = ''; // por qué el mandato frenó alguna compra
   let regimeBlocked = 0; // candidatas descartadas por el filtro de mercado
   const actions = [];
   const sold = new Set();
@@ -56,25 +58,31 @@ export function autonomousReview() {
     return r.ok;
   };
 
+  // 0) Posiciones que ya no encajan en el mandato (mercado, símbolo o sector excluidos): se venden
+  for (const p of getSummary().positions) {
+    const al = allowedByMandate(getQuote(p.symbol));
+    if (!al.ok && tryOrder({ symbol: p.symbol, side: 'sell', shares: p.shares, reason: `Fuera del mandato: ${al.why}` }, `Vendo todo ${p.symbol}: ${al.why}.`)) sold.add(p.symbol);
+  }
   // 1) Gestión de riesgo sobre lo que ya tengo
   for (const p of getSummary().positions) {
+    if (sold.has(p.symbol)) continue;
     const { stopPct, atrPct } = stopFor(p.symbol), tp = takeProfitFor(p.symbol);
-    const stopWhy = atrPct != null ? `límite ${stopPct}% = 3,5 × volatilidad diaria ${atrPct}%` : `límite ${stopPct}%, sin datos de volatilidad`;
+    const stopWhy = atrPct != null ? `límite ${stopPct}% = ${dec(M.riesgo.stopAtrMult)} × volatilidad diaria ${atrPct}%` : `límite ${stopPct}%, sin datos de volatilidad`;
     if (p.pnlPct <= stopPct) {
       if (p.pnlPct <= -30 && suspectSplit(p) && !eventsFresh(p.symbol)) { suspectSkips.push(p.symbol); continue; } // no vende por un posible split sin verificar
       if (tryOrder({ symbol: p.symbol, side: 'sell', shares: p.shares, reason: `Stop-loss: pérdida de ${pct(p.pnlPct)} (${stopWhy})` },
         `Vendo todo ${p.symbol} por stop-loss (${pct(p.pnlPct)}; ${stopWhy}).`)) sold.add(p.symbol);
     } else if (p.pnlPct >= tp && p.shares >= 2) {
-      const n = Math.floor(p.shares / 2);
+      const n = Math.max(1, Math.floor((p.shares * M.riesgo.takeProfitSellPct) / 100));
       if (tryOrder({ symbol: p.symbol, side: 'sell', shares: n, reason: `Toma de beneficios: ganancia de ${pct(p.pnlPct)} (objetivo ${tp}%)` },
         `Vendo ${n} de ${p.symbol} para asegurar beneficios (${pct(p.pnlPct)}).`)) sold.add(p.symbol);
     }
   }
   for (const p of getSummary().positions) {
-    if (p.weightPct > OVERWEIGHT_PCT && !sold.has(p.symbol)) {
+    if (p.weightPct > OVERWEIGHT_PCT() && !sold.has(p.symbol)) {
       const equity = getSummary().equity;
-      const n = Math.max(1, Math.floor(((p.weightPct - TARGET_WEIGHT_PCT) / 100) * equity / p.price));
-      if (tryOrder({ symbol: p.symbol, side: 'sell', shares: n, reason: `Rebalanceo: pesaba ${p.weightPct}% (máx. ${OVERWEIGHT_PCT}%)` },
+      const n = Math.max(1, Math.floor(((p.weightPct - TARGET_WEIGHT_PCT()) / 100) * equity / p.price));
+      if (tryOrder({ symbol: p.symbol, side: 'sell', shares: n, reason: `Rebalanceo: pesaba ${p.weightPct}% (máx. ${OVERWEIGHT_PCT()}%)` },
         `Recorto ${n} de ${p.symbol}: pesaba ${p.weightPct}% de la cartera.`)) sold.add(p.symbol);
     }
   }
@@ -83,17 +91,17 @@ export function autonomousReview() {
   const cov = analysisCoverage();
   const ready = cov.analyzed >= cov.total * MIN_COVERAGE; // con pocos valores analizados las medianas del sector no son fiables
   for (const p of ready ? getSummary().positions : []) {
-    if (sold.has(p.symbol) || Date.now() - lastBuyAt(p.symbol) < MIN_HOLD_MS) continue;
+    if (sold.has(p.symbol) || Date.now() - lastBuyAt(p.symbol) < MIN_HOLD_MS()) continue;
     const a = analyze(p.symbol);
-    if (!a || a.score == null || a.confidence < MIN_CONFIDENCE) continue;
+    if (!a || a.score == null || a.confidence < MIN_CONFIDENCE()) continue;
     if (a.verdict === 'Evitar') {
       tryOrder({ symbol: p.symbol, side: 'sell', shares: p.shares, reason: `Tesis rota (${a.score}/100): ${worst(a) || 'puntuación baja'}` },
         `Vendo todo ${p.symbol}: su tesis se ha deteriorado (${a.score}/100; ${worst(a, 1) || 'puntuación baja'}).`);
-    } else if (a.verdict === 'Cara' && p.pnlPct >= 10 && p.shares >= 2) {
+    } else if (a.verdict === 'Cara' && p.pnlPct >= M.ventas.expensiveGainPct && p.shares >= 2) {
       const n = Math.floor(p.shares / 2);
       tryOrder({ symbol: p.symbol, side: 'sell', shares: n, reason: `Sobrevalorada tras subir ${pct(p.pnlPct)}: ${worst(a) || 'múltiplos exigentes'}` },
         `Vendo ${n} de ${p.symbol}: tras subir ${pct(p.pnlPct)} ya está cara (${worst(a, 1) || 'múltiplos exigentes'}).`);
-    } else if (a.redFlags >= 2 && p.shares >= 2) {
+    } else if (a.redFlags >= M.ventas.redFlagsToReduce && p.shares >= 2) {
       const n = Math.floor(p.shares / 2);
       tryOrder({ symbol: p.symbol, side: 'sell', shares: n, reason: `Varios titulares de riesgo grave (${a.redFlags}): ${a.catalysts.filter((c) => c.text.startsWith('▼')).slice(0, 2).map((c) => c.text.slice(2)).join(' | ')}` },
         `Reduzco ${n} de ${p.symbol} por ${a.redFlags} titulares de riesgo grave.`);
@@ -105,17 +113,17 @@ export function autonomousReview() {
   const sectorW = {};
   for (const p of sum.positions) sectorW[p.sector] = (sectorW[p.sector] ?? 0) + p.weightPct;
   const held = Object.fromEntries(sum.positions.map((p) => [p.symbol, p.weightPct]));
-  const canBuy = ready || ALLOW_MOMENTUM_ONLY;
+  const canBuy = ready || ALLOW_MOMENTUM_ONLY();
 
   const FRESH_MS = 20 * 60 * 1000; // solo valores con precio reciente
   const candidates = !canBuy ? [] : getAllQuotes()
-    .filter((q) => q.symbol !== 'SPY' && q.price != null && Date.now() - q.ts < FRESH_MS && (held[q.symbol] ?? 0) < 15 && canTrade(q.symbol))
-    .filter((q) => Math.abs(q.changePct) < 10 && q.changePct > -5) // ni persigue saltos bruscos ni compra caídas fuertes del día
+    .filter((q) => q.symbol !== 'SPY' && q.price != null && Date.now() - q.ts < FRESH_MS && (held[q.symbol] ?? 0) < M.compras.maxExistingWeightPct && allowedByMandate(q).ok && canTrade(q.symbol))
+    .filter((q) => q.changePct < M.compras.maxDayRisePct && q.changePct > -M.compras.maxDayFallPct) // ni persigue saltos bruscos ni compra caídas fuertes del día
     .map((q) => {
       const a = analyze(q.symbol);
       const trend = trendPct(q.symbol);
       if (!ready) { const g = regimeGate(q.market, null); if (!g.ok) { regimeBlocked++; return null; } return { ...q, a: null, trend, mult: g.mult, pick: trend + q.changePct * 0.5 }; }
-      const ok = a && a.verdict === 'Atractiva' && !a.eventRisk && a.confidence >= MIN_CONFIDENCE;
+      const ok = a && a.verdict === 'Atractiva' && !a.eventRisk && a.confidence >= MIN_CONFIDENCE();
       if (!ok) return null;
       const g = regimeGate(q.market, a.score);
       if (!g.ok) { regimeBlocked++; return null; }
@@ -124,13 +132,15 @@ export function autonomousReview() {
     .filter((c) => c && (c.a || c.pick > -0.3));
 
   let buys = 0;
-  while (buys < MAX_BUYS_PER_REVIEW && candidates.length) {
+  while (buys < MAX_BUYS_PER_REVIEW() && candidates.length) {
     candidates.sort((a, b) => (sectorW[a.sector] ?? 0) - (sectorW[b.sector] ?? 0) || b.pick - a.pick);
     const c = candidates.shift();
     const s = getSummary();
+    if (M.riesgo.maxPositions > 0 && !held[c.symbol] && s.positions.length >= M.riesgo.maxPositions) { mandateBlocked = `límite de ${M.riesgo.maxPositions} posiciones alcanzado`; break; }
+    if ((sectorW[c.sector] ?? 0) >= M.riesgo.sectorMaxPct) { mandateBlocked = `sector ${c.sector} en el máximo del ${M.riesgo.sectorMaxPct} %`; continue; }
     const spendable = s.cash - (s.equity * CASH_FLOOR_PCT) / 100;
-    const conviction = c.a ? clamp((c.a.score - 66) / 24, 0, 1) : 0.3;
-    const budget = Math.min((s.equity * ENTRY_PCT * (0.6 + 0.8 * conviction) * c.mult * sizeFactor(c.symbol)) / 100, spendable);
+    const conviction = c.a ? clamp((c.a.score - M.compras.convictionFloorScore) / M.compras.convictionSpan, 0, 1) : 0.3;
+    const budget = Math.min((s.equity * ENTRY_PCT() * (0.6 + 0.8 * conviction) * c.mult * sizeFactor(c.symbol)) / 100, spendable);
     const shares = Math.floor(budget / c.price);
     if (shares < 1) break;
     const why = c.a
@@ -148,26 +158,26 @@ export function autonomousReview() {
   let rotationNote = '';
   const s1 = getSummary();
   const noRoom = s1.cash - (s1.equity * CASH_FLOOR_PCT) / 100 < s1.equity * 0.02;
-  if (ready && noRoom && rotationsToday() >= MAX_ROTATIONS_PER_DAY) rotationNote = ` Límite de ${MAX_ROTATIONS_PER_DAY} rotaciones en 24 h alcanzado.`;
-  if (ready && noRoom && rotationsToday() < MAX_ROTATIONS_PER_DAY) {
+  if (ready && noRoom && rotationsToday() >= MAX_ROTATIONS_PER_DAY()) rotationNote = ` Límite de ${MAX_ROTATIONS_PER_DAY()} rotaciones en 24 h alcanzado.`;
+  if (ready && noRoom && rotationsToday() < MAX_ROTATIONS_PER_DAY()) {
     const weak = s1.positions
-      .filter((p) => !sold.has(p.symbol) && canTrade(p.symbol) && Date.now() - lastBuyAt(p.symbol) >= MIN_HOLD_MS && Date.now() - lastRotationBuyAt(p.symbol) >= ROTATION_MIN_HOLD_MS)
+      .filter((p) => !sold.has(p.symbol) && canTrade(p.symbol) && Date.now() - lastBuyAt(p.symbol) >= MIN_HOLD_MS() && Date.now() - lastRotationBuyAt(p.symbol) >= ROTATION_MIN_HOLD_MS())
       .map((p) => ({ p, a: analyze(p.symbol) }))
-      .filter(({ a }) => a && a.score != null && a.confidence >= MIN_CONFIDENCE)
+      .filter(({ a }) => a && a.score != null && a.confidence >= MIN_CONFIDENCE())
       .sort((x, y) => x.a.score - y.a.score);
     const rotCands = getAllQuotes()
-      .filter((q) => q.symbol !== 'SPY' && q.price != null && Date.now() - q.ts < FRESH_MS && !held[q.symbol] && canTrade(q.symbol) && Math.abs(q.changePct) < 10 && q.changePct > -5)
+      .filter((q) => q.symbol !== 'SPY' && q.price != null && Date.now() - q.ts < FRESH_MS && !held[q.symbol] && allowedByMandate(q).ok && canTrade(q.symbol) && q.changePct < M.compras.maxDayRisePct && q.changePct > -M.compras.maxDayFallPct)
       .map((q) => ({ q, a: analyze(q.symbol) }))
-      .filter(({ a }) => a && a.verdict === 'Atractiva' && !a.eventRisk && a.confidence >= MIN_CONFIDENCE)
+      .filter(({ a }) => a && a.verdict === 'Atractiva' && !a.eventRisk && a.confidence >= MIN_CONFIDENCE())
       .filter(({ q, a }) => { const ok = regimeGate(q.market, a.score).ok; if (!ok) regimeBlocked++; return ok; })
       .sort((x, y) => y.a.score - x.a.score);
-    if (weak.length) rotationNote = ` Posición más débil: ${weak[0].p.symbol} ${weak[0].a.score}/100; solo se rota si una candidata la supera en ${ROTATION_GAP}+ puntos.`;
+    if (weak.length) rotationNote = ` Posición más débil: ${weak[0].p.symbol} ${weak[0].a.score}/100; solo se rota si una candidata la supera en ${ROTATION_GAP()}+ puntos.`;
     let pair = null;
     outer: for (const c of rotCands) {
       for (const w of weak) {
-        if (c.a.score - w.a.score < ROTATION_GAP) break; // `weak` va de menor a mayor puntuación: las siguientes tendrían aún menos ventaja
+        if (c.a.score - w.a.score < ROTATION_GAP()) break; // `weak` va de menor a mayor puntuación: las siguientes tendrían aún menos ventaja
         const sectorAfter = (sectorW[c.q.sector] ?? 0) - (w.p.sector === c.q.sector ? w.p.weightPct : 0);
-        if (sectorAfter >= ROTATION_SECTOR_MAX) continue;
+        if (sectorAfter >= ROTATION_SECTOR_MAX()) continue;
         pair = { c, w }; break outer;
       }
     }
@@ -181,8 +191,8 @@ export function autonomousReview() {
         sold.add(w.p.symbol);
         const s2 = getSummary();
         const room = s2.cash - (s2.equity * CASH_FLOOR_PCT) / 100;
-        const conviction = clamp((c.a.score - 66) / 24, 0, 1);
-        const budget = Math.min((s2.equity * ENTRY_PCT * (0.6 + 0.8 * conviction) * regimeGate(c.q.market, c.a.score).mult * sizeFactor(c.q.symbol)) / 100, room);
+        const conviction = clamp((c.a.score - M.compras.convictionFloorScore) / M.compras.convictionSpan, 0, 1);
+        const budget = Math.min((s2.equity * ENTRY_PCT() * (0.6 + 0.8 * conviction) * regimeGate(c.q.market, c.a.score).mult * sizeFactor(c.q.symbol)) / 100, room);
         const shares = Math.floor(budget / c.q.price);
         if (shares >= 1) tryOrder(
           { symbol: c.q.symbol, side: 'buy', shares, reason: `Rotación desde ${w.p.symbol} (${w.a.score}/100 → ${c.a.score}/100): ${thesisLine(c.a, 3)} · ${c.q.sector}` },
@@ -198,23 +208,24 @@ export function autonomousReview() {
   if (actions.length) head = actions.join(' ');
   else if (open && !open.length) head = 'Mercados cerrados: no se opera hasta la próxima sesión (el gestor sigue recopilando datos y noticias).';
   else if (ready && s.cash - (s.equity * CASH_FLOOR_PCT) / 100 < s.equity * 0.01) {
-    const top = rank({ limit: 8, verdicts: ['Atractiva'], minConfidence: MIN_CONFIDENCE }).filter((a) => !held[a.symbol]).slice(0, 3);
+    const top = rank({ limit: 8, verdicts: ['Atractiva'], minConfidence: MIN_CONFIDENCE() }).filter((a) => !held[a.symbol]).slice(0, 3);
     head = `Sin cambios: el efectivo está en el mínimo (${((s.cash / s.equity) * 100).toFixed(1)} %, colchón del ${CASH_FLOOR_PCT} %) y no hay margen para nuevas compras.` +
       (top.length ? ` Candidatas en espera: ${top.map((a) => `${a.symbol} ${a.score}/100`).join(', ')}.` : '') + rotationNote;
   }
   else if (suspectSkips.length) head = `Sin cambios: ${suspectSkips.join(', ')} ha caído de golpe y podría ser un split sin verificar; no se vende por stop-loss hasta confirmar con los datos de eventos.`;
   else if (closedSkips) head = `Sin cambios: ${closedSkips} decisión(es) pendientes de que abra el mercado de ese valor.`;
-  else if (!ready && !ALLOW_MOMENTUM_ONLY) head = `Sin cambios: el análisis fundamental aún cubre ${cov.analyzed}/${cov.total} valores y necesito al menos ${Math.ceil(cov.total * MIN_COVERAGE)} para comparar cada empresa con su sector. El gestor espera antes de comprar o vender por tesis (la gestión de riesgo sigue activa).`;
+  else if (!ready && !ALLOW_MOMENTUM_ONLY()) head = `Sin cambios: el análisis fundamental aún cubre ${cov.analyzed}/${cov.total} valores y necesito al menos ${Math.ceil(cov.total * MIN_COVERAGE)} para comparar cada empresa con su sector. El gestor espera antes de comprar o vender por tesis (la gestión de riesgo sigue activa).`;
   else {
-    const top = rank({ limit: 3, verdicts: ['Atractiva', 'Neutral', 'Cara', 'Precaución', 'Evitar'], minConfidence: MIN_CONFIDENCE });
+    const top = rank({ limit: 3, verdicts: ['Atractiva', 'Neutral', 'Cara', 'Precaución', 'Evitar'], minConfidence: MIN_CONFIDENCE() });
     head = `Sin cambios: ningún valor cumple ahora los criterios (tesis atractiva, sin resultados inminentes y sin riesgo grave en titulares).` +
       (top.length ? ` Mejor puntuados: ${top.map((a) => `${a.symbol} ${a.score}/100 (${a.verdict})`).join(', ')}.` : '');
   }
+  if (mandateBlocked) head += ` Mandato: ${mandateBlocked}.`;
   const rg = regimeFor('S&P 500');
   const st = stressInfo();
   const stressed = st && st.level !== 'normal';
   const regimeNote = (rg && rg.state !== 'alcista') || stressed
-    ? ` Filtro de mercado: ${[rg && rg.state !== 'alcista' ? regimeText('S&P 500') : null, stressed ? st.text : null].filter(Boolean).join('; ')}; ${rg?.state === 'bajista' ? `solo compro con tesis de ${BEAR_MIN_SCORE}+/100 y a medio tamaño` : 'compro con tamaño reducido'}, colchón de efectivo del ${CASH_FLOOR_PCT} %.${regimeBlocked ? ` ${regimeBlocked} candidata(s) descartada(s) por el filtro.` : ''}`
+    ? ` Filtro de mercado: ${[rg && rg.state !== 'alcista' ? regimeText('S&P 500') : null, stressed ? st.text : null].filter(Boolean).join('; ')}; ${rg?.state === 'bajista' ? `solo compro con tesis de ${bearMinScore()}+/100 y a medio tamaño` : 'compro con tamaño reducido'}, colchón de efectivo del ${CASH_FLOOR_PCT} %.${regimeBlocked ? ` ${regimeBlocked} candidata(s) descartada(s) por el filtro.` : ''}`
     : '';
   return `${head}${regimeNote} Patrimonio ${usd(s.equity)}, efectivo ${usd(s.cash)} (${((s.cash / s.equity) * 100).toFixed(1)}%). Análisis: ${cov.analyzed}/${cov.total} valores.`;
 }

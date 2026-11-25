@@ -6,9 +6,11 @@ import { getQuote, getAllQuotes, isValid, getHistory } from './market.js';
 import { tradeStatus } from './hours.js';
 import { stopFor, regimeSummary } from './volatility.js';
 import { costsFor, dividendTaxPct, costSummary, COST } from './costs.js';
+import { M } from './mandato.js';
 
-export const INITIAL_CASH = 100000;
-const MAX_POSITION_PCT = 0.30; // límite de riesgo: máx. 30% del patrimonio en un valor
+// Capital inicial de la cartera actual: sale del mandato al crearla o reiniciarla y se guarda en el estado (una cartera ya creada conserva el suyo)
+export let INITIAL_CASH = M.capital.initialCash;
+const maxPositionPct = () => M.riesgo.maxPositionPct / 100; // límite de riesgo: máx. % del patrimonio en un valor (mandato)
 // Los costes de operar (comisión, deslizamiento, divisa, impuestos) están en costs.js
 
 // --- Persistencia: la cartera se guarda en data/state.json y se recupera al arrancar ---
@@ -16,6 +18,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data', 'state.json');
 
 const freshState = () => ({
+  initialCash: INITIAL_CASH,
   cash: INITIAL_CASH,
   positions: {}, // symbol -> { shares, avgCost }
   orders: [],
@@ -51,7 +54,8 @@ function load() {
     if (!fs.existsSync(DATA_FILE)) return;
     const saved = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     if (typeof saved.cash !== 'number' || typeof saved.positions !== 'object') throw new Error('formato no válido');
-    state = { ...freshState(), ...saved };
+    INITIAL_CASH = typeof saved.initialCash === 'number' && saved.initialCash > 0 ? saved.initialCash : 100000; // estados antiguos: siempre fueron 100.000
+    state = { ...freshState(), ...saved, initialCash: INITIAL_CASH };
     // versiones anteriores no guardaban el resumen diario: se reconstruye con la curva que haya
     if (!state.dailyEquity.length && state.equityCurve.length) for (const pt of state.equityCurve) upsertDaily(pt.t, pt.equity, pt.spy);
     state.startT ??= state.orders[0]?.t ?? state.equityCurve[0]?.t ?? null;
@@ -79,8 +83,9 @@ export const flushState =() => { if (saveTimer) { clearTimeout(saveTimer); saveT
 
 load();
 
-// Vuelve a 100.000 USD, sin posiciones, historial ni decisiones.
+// Vuelve al capital inicial del mandato, sin posiciones, historial ni decisiones.
 export function resetPortfolio() {
+  INITIAL_CASH = M.capital.initialCash; // el reinicio toma el capital del mandato vigente
   state = freshState();
   flushState();
 }
@@ -119,8 +124,8 @@ export function placeOrder({ symbol, side, shares, reason = '', by = 'usuario', 
     if (gross + fees > state.cash) return { ok: false, error: `Efectivo insuficiente (${state.cash.toFixed(2)} disponible)` };
     const equity = getSummary().equity;
     const current = (state.positions[symbol]?.shares ?? 0) * price;
-    if ((current + gross) / equity > MAX_POSITION_PCT) {
-      return { ok: false, error: `Superaría el límite del ${MAX_POSITION_PCT * 100}% del patrimonio en ${symbol}` };
+    if ((current + gross) / equity > maxPositionPct()) {
+      return { ok: false, error: `Superaría el límite del ${M.riesgo.maxPositionPct}% del patrimonio en ${symbol}` };
     }
     const pos = state.positions[symbol] ?? { shares: 0, avgCost: 0, evFrom: Date.now(), evDone: [], evCheckedTo: Date.now() };
     jb = { sharesBefore: pos.shares, avgBefore: pos.avgCost };
@@ -350,7 +355,7 @@ export function getRisk() {
     concentrationHHI: +hhi.toFixed(3),
     sectorWeightsPct: Object.fromEntries(Object.entries(bySector).map(([k, v]) => [k, +v.toFixed(2)])),
     vsSpyPct: +(pfRet - spyRet).toFixed(2),
-    maxPositionLimitPct: MAX_POSITION_PCT * 100,
+    maxPositionLimitPct: M.riesgo.maxPositionPct,
     regime: regimeSummary(),
     costs: costSummary(state.orders, state.events, INITIAL_CASH),
   };
