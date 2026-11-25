@@ -1,0 +1,51 @@
+{
+ "updatedAt": 1795820627499,
+ "daily": [
+  {
+   "date": "2026-11-25",
+   "t": 1795644747979,
+   "cash": 23173.66,
+   "orders": 57,
+   "positions": 14,
+   "journal": 27,
+   "equity": 93504.08,
+   "bytes": 82263,
+   "copyBytes": 23525
+  },
+  {
+   "date": "2026-11-26",
+   "t": 1795647627444,
+   "cash": 23173.66,
+   "orders": 57,
+   "positions": 14,
+   "journal": 27,
+   "equity": 93504.08,
+   "bytes": 82284,
+   "copyBytes": 23538
+  },
+  {
+   "date": "2026-11-27",
+   "t": 1795734273282,
+   "cash": 23173.66,
+   "orders": 57,
+   "positions": 14,
+   "journal": 27,
+   "equity": 93579.67,
+   "bytes": 85527,
+   "copyBytes": 23873
+  },
+  {
+   "date": "2026-11-28",
+   "t": 1795820627499,
+   "cash": 23657.02,
+   "orders": 59,
+   "positions": 14,
+   "journal": 28,
+   "equity": 94442.48,
+   "bytes": 90675,
+   "copyBytes": 24443
+  }
+ ],
+ "weekly": [],
+ "warnings": []
+}
