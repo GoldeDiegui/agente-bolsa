@@ -217,3 +217,14 @@ Tarjeta «Diario de operaciones» en la web (`GET /api/journal` en local; en la 
 - **Seguimiento posterior**: a las 5 y 20 sesiones de vender se mide qué hizo el precio y se recalcula la autopsia. Los valores vendidos hace poco se mantienen en la descarga de precios históricos.
 - **Resumen** (desde 5 operaciones cerradas): resultados por tipo de salida, por puntuación al comprar y por quién decidió, con conclusiones como «los stops parecen demasiado ajustados» o «la puntuación discrimina bien».
 - Las operaciones anteriores al diario se reconstruyen con el historial de órdenes (sin foto de entrada ni recorrido; se marcan como tales).
+
+## Copias de seguridad
+
+La rama `estado` se reescribe en cada ciclo (un solo commit), así que no guarda historial. Para poder recuperarse de un fallo, el flujo **Copias de seguridad** (`.github/workflows/copias.yml`) copia cada día a las 22:15 UTC el estado en la rama `copias`:
+
+- `diarias/AAAA-MM-DD/`: `state.json.gz` (cartera, órdenes, diario, curva) y `scorecard.json.gz` (marcador de aciertos). Últimos 30 días.
+- `semanales/AAAA-MM-DD/`: lo anterior más `fundamentals.json.gz`, los lunes. Últimas 26 semanas.
+- `indice.json`: lista de copias con patrimonio, operaciones y posiciones de cada una. Avisa si una copia tiene menos operaciones que la anterior.
+- Si `state.json` está dañado, el flujo sale en rojo y no copia.
+
+**Restaurar**: Actions → «Restaurar copia» → Run workflow → fecha `AAAA-MM-DD` (o `ultima`). Valida la copia, guarda lo que había en `copias/previas/` (últimas 10) y la deja como estado. La web se actualiza en el siguiente ciclo. En local: `node copias.js restaurar <carpeta copias> <carpeta estado> [fecha]`.
