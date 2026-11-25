@@ -96,6 +96,11 @@
     <div id="macro"></div>
   </section>
 
+  <section class="card c12" id="mandCard" style="display:none">
+    <h2>Mandato <span id="mandSub" style="text-transform:none;letter-spacing:0"></span></h2>
+    <div id="mand"></div>
+  </section>
+
   <section class="card c12" id="perfCard" style="display:none">
     <h2>Rendimiento <span id="perfSince" style="text-transform:none;letter-spacing:0"></span></h2>
     <div id="perf"></div>
@@ -323,6 +328,24 @@ async function loadFin(sym) {
 }
 
 
+// ---------- Mandato (parámetros activos de la cartera) ----------
+function renderMandate(m) {
+  const card = $('mandCard');
+  if (!m) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  $('mandSub').textContent = `· ${m.name} v${m.version} (${m.hash})`;
+  const S = m.summary, ex = [...S.excludedSymbols, ...S.excludedSectors];
+  const chip = (k, v) => `<span style="display:inline-block;margin:0 14px 4px 0"><span style="color:var(--mut);font-size:11px">${k}</span> <b>${esc(String(v))}</b></span>`;
+  const warn = m.warnings?.length ? `<div class="down" style="font-size:12px;margin:6px 0">${m.warnings.map(w => '⚠ ' + esc(w)).join('<br>')}</div>` : '';
+  const chg = m.changed?.length
+    ? `<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--mut);font-size:12px">${m.changed.length} parámetro(s) distintos de los valores por defecto</summary><table style="font-size:12px;margin-top:4px"><tbody>${m.changed.map(c => `<tr><td><code>${esc(c.path)}</code></td><td class="r"><b>${esc(JSON.stringify(c.value))}</b></td><td style="color:var(--mut)">por defecto ${esc(JSON.stringify(c.default))}</td><td style="color:var(--mut)">${esc(c.desc)}</td></tr>`).join('')}</tbody></table></details>`
+    : `<div style="color:var(--mut);font-size:12px">Valores por defecto (sin cambios en mandato.json).</div>`;
+  $('mand').innerHTML = `<div>` + chip('Capital inicial', usd(m.initialCash)) + chip('Mercados', S.markets.join(' + ')) + chip('Stop', S.stop) + chip('Máx. por valor', S.maxPositionPct + ' %') + chip('Efectivo mínimo', S.cashFloorPct + ' %') + chip('Compra base', S.entryPct + ' %') +
+    chip('Posiciones máx.', S.maxPositions || 'sin límite') + chip('Sector máx.', S.sectorMaxPct >= 100 ? 'sin límite' : S.sectorMaxPct + ' %') + chip('Costes', S.costModel) + (ex.length ? chip('Excluidos', ex.join(', ')) : '') + `</div>` + warn + chg;
+}
+async function loadMandate() { try { renderMandate(await (await fetch('/api/mandate')).json()); } catch { /* se reintenta */ } }
+
+
 // ---------- Rendimiento (métricas de gestora) ----------
 function renderPerf(p) {
   const card = $('perfCard');
@@ -371,7 +394,7 @@ function renderPerf(p) {
   const mk = p.byMarket.map(x => rowOf(esc(x.name) + (x.indexPct != null ? ` <span style="color:var(--mut)" title="Rentabilidad del índice en el mismo periodo">· índice ${sp(x.indexPct)}</span>` : ''), x)).join('');
   $('perf').innerHTML = html +
     `<div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:6px">${tbl('Por valor (mayores aportaciones)', sym, 'Valor', true)}${tbl('Por sector', sec, 'Sector')}${tbl('Por mercado', mk, 'Mercado')}</div>` +
-    `<p style="color:var(--mut);font-size:11px;margin:8px 0 0">«Aporta» = ganancia del valor en US$ y en puntos sobre el capital inicial (100.000 US$); la suma de todos coincide con la ganancia total (tras costes). ` + (p.notes ?? []).map(esc).join(' ') + `</p>`;
+    `<p style="color:var(--mut);font-size:11px;margin:8px 0 0">«Aporta» = ganancia del valor en US$ y en puntos sobre el capital inicial (${usd(p.initialCash ?? 100000)}); la suma de todos coincide con la ganancia total (tras costes). ` + (p.notes ?? []).map(esc).join(' ') + `</p>`;
 }
 async function loadPerf() { try { renderPerf(await (await fetch('/api/performance')).json()); } catch { /* se reintenta */ } }
 
@@ -670,7 +693,7 @@ async function loadStatic() {
     eqChart.data.labels = []; eqChart.data.datasets.forEach(d => d.data = []);
     s.curve.forEach(addPoint); eqChart.update();
     renderPortfolio(s.portfolio); renderRisk(s.risk, s.portfolio); renderMarket(s.quotes, s.market);
-    renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); renderScore(s.scorecard); renderBanner(s); renderDaily(s.daily); renderMacro(s.macro); renderPerf(s.performance); renderJournal(s.journal);
+    renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); renderScore(s.scorecard); renderBanner(s); renderDaily(s.daily); renderMacro(s.macro); renderPerf(s.performance); renderJournal(s.journal); renderMandate(s.mandate);
     $('live').textContent = '● publicado ' + ago(s.updatedAt); $('live').className = (Date.now() - s.updatedAt < 3 * 3600e3 ? 'up' : 'down');
   };
   await refresh();
@@ -683,7 +706,7 @@ async function load() {
   initCharts();
   s.curve.forEach(addPoint); eqChart.update();
   renderPortfolio(s.portfolio); renderRisk(s.risk, s.portfolio); renderMarket(s.quotes, s.market);
-  renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); setInterval(loadOpps, 30000); loadDaily(); setInterval(loadDaily, 60000); loadPerf(); setInterval(loadPerf, 120000); loadJournal(); setInterval(loadJournal, 60000); loadMacro(); setInterval(loadMacro, 120000); loadScore(); setInterval(loadScore, 600000);
+  renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); setInterval(loadOpps, 30000); loadDaily(); setInterval(loadDaily, 60000); loadPerf(); setInterval(loadPerf, 120000); loadJournal(); setInterval(loadJournal, 60000); loadMandate(); loadMacro(); setInterval(loadMacro, 120000); loadScore(); setInterval(loadScore, 600000);
   if (s.agentMode === 'reglas') addMsg('Modo gratuito: soy un gestor basado en reglas (stop-loss -8%, toma de beneficios +15%, máx. 25% por valor, 15% de efectivo mínimo). Decido con análisis fundamental (valoración frente al sector, crecimiento, calidad, analistas, resultados y noticias). Prueba "oportunidades", "analiza apple", "¿está cara nvidia?", "por qué compraste X", "revisa la cartera" o "estado de los datos". Revisión automática cada 5 minutos.', 'a');
 
   const es = new EventSource('/api/stream');
@@ -751,7 +774,7 @@ $('pend').addEventListener('click', async (e) => {
 });
 
 $('resetBtn').addEventListener('click', async () => {
-  if (!confirm('¿Reiniciar la cartera?\n\nSe borrarán posiciones, historial y decisiones, y volverás a 100.000 US$. No se puede deshacer.')) return;
+  if (!confirm('¿Reiniciar la cartera?\n\nSe borrarán posiciones, historial y decisiones, y volverás al capital inicial del mandato. No se puede deshacer.')) return;
   const r = await fetch('/api/reset', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ confirm:true }) });
   if (!r.ok) alert('No se pudo reiniciar la cartera.');
 });
