@@ -101,6 +101,11 @@
     <div id="mand"></div>
   </section>
 
+  <section class="card c12" id="lanesCard" style="display:none">
+    <h2>Carteras en paralelo <span id="lanesSub" style="text-transform:none;letter-spacing:0"></span></h2>
+    <div id="lanes"></div>
+  </section>
+
   <section class="card c12" id="perfCard" style="display:none">
     <h2>Rendimiento <span id="perfSince" style="text-transform:none;letter-spacing:0"></span></h2>
     <div id="perf"></div>
@@ -326,6 +331,51 @@ async function loadFin(sym) {
     renderFin(sym);
   } catch { if ($('fin')) $('fin').innerHTML = '<h4>Cuentas</h4><p style="color:var(--mut);font-size:12px">No se pudieron cargar las cuentas ahora mismo.</p>'; }
 }
+
+
+// ---------- Carteras en paralelo ----------
+let lanesChart = null, LANES_OPEN = new Set();
+function renderLanes(L) {
+  const card = $('lanesCard');
+  if (!L || !L.lanes || L.lanes.length < 2) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  const nf = (v, d = 2) => v == null ? '–' : Number(v).toLocaleString('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d });
+  const sp = (v, d = 2) => v == null ? '–' : (v > 0 ? '+' : '') + nf(v, d) + ' %';
+  const cl = (v) => v == null ? '' : v >= 0 ? 'up' : 'down';
+  const lanes = L.lanes;
+  $('lanesSub').textContent = `· principal + ${lanes.length - 1} · mismos datos de mercado, distintos parámetros`;
+  const sorted = lanes.slice().sort((a, b) => b.totalReturnPct - a.totalReturnPct);
+  const rows = sorted.map((l, i) => {
+    const c = l.perf.curve, t = l.perf.trades, open = LANES_OPEN.has(l.id);
+    const diff = l.mandate.diff.length ? `<table style="font-size:12px;margin-top:4px"><thead><tr><th>Parámetro</th><th class="r">Esta cartera</th><th class="r">Principal</th><th></th></tr></thead><tbody>${l.mandate.diff.map(d => `<tr><td><code>${esc(d.path)}</code></td><td class="r"><b>${esc(JSON.stringify(d.value))}</b></td><td class="r" style="color:var(--mut)">${esc(JSON.stringify(d.main))}</td><td style="color:var(--mut)">${esc(d.desc)}</td></tr>`).join('')}</tbody></table>` : '<div style="color:var(--mut);font-size:12px">Es la cartera principal (mandato.json).</div>';
+    const pos = l.positions.length ? l.positions.slice().sort((a, b) => b.value - a.value).map(p => `<span style="margin-right:12px"><b class="sym" data-sym="${esc(p.symbol)}">${esc(p.symbol)}</b> <span style="color:var(--mut)">${nf(p.weightPct, 1)} %</span> <span class="${cl(p.pnl)}">${sp(p.pnlPct)}</span></span>`).join('') : '<span style="color:var(--mut)">Sin posiciones</span>';
+    const ord = l.orders.slice(0, 5).map(o => `<div style="color:var(--mut)"><span class="${o.side === 'buy' ? 'up' : 'down'}">${o.side === 'buy' ? 'COMPRA' : 'VENTA'}</span> ${esc(o.symbol)} ${o.shares} × ${usd(o.price)} — ${esc(o.reason)}</div>`).join('');
+    return `<tr class="lr" style="cursor:pointer" data-id="${esc(l.id)}"><td style="color:var(--mut)">${i + 1}</td><td><b>${esc(l.name)}</b> <span class="tag" title="Huella del mandato">${esc(l.mandate.hash)}</span></td>` +
+      `<td class="r">${nf(l.equity, 0)}</td><td class="r ${cl(l.totalReturnPct)}"><b>${sp(l.totalReturnPct)}</b></td><td class="r ${cl(c.excessPct)}">${sp(c.excessPct)}</td>` +
+      `<td class="r">${c.sharpe == null ? '–' : nf(c.sharpe)}</td><td class="r down">${sp(c.maxDrawdownPct)}</td><td class="r">${nf(l.cashPct, 0)} %</td><td class="r">${l.positions.length}</td><td class="r">${t.orders ?? 0}</td><td class="r">${t.closed ? t.hitRatePct + ' %' : '–'}</td><td class="r">${nf(l.costs?.pctOfCapital, 2)} %</td><td class="r">${c.days}</td></tr>` +
+      `<tr class="ld" id="ld-${esc(l.id)}" style="display:${open ? '' : 'none'}"><td colspan="13" style="background:rgba(127,127,127,.07);padding:8px 12px;font-size:12px;line-height:1.5">` +
+      (l.description ? `<div style="margin-bottom:4px">${esc(l.description)}</div>` : '') + `<div style="margin-bottom:6px"><b>Diferencias frente a la principal</b>${diff}</div><div style="margin-bottom:6px"><b>Posiciones:</b> ${pos}</div>` +
+      (ord ? `<div style="margin-bottom:6px"><b>Últimas operaciones</b>${ord}</div>` : '') + (l.insights?.findings?.length ? `<div style="color:var(--mut)">${l.insights.findings.map(esc).join(' · ')}</div>` : '') + `</td></tr>`;
+  }).join('');
+  $('lanes').innerHTML = `<div class="chartbox" style="height:240px;margin-bottom:10px"><canvas id="lanesCanvas"></canvas></div>` +
+    `<div style="overflow-x:auto"><table style="width:100%;font-size:12px;white-space:nowrap"><thead><tr><th>#</th><th>Cartera</th><th class="r">Patrimonio</th><th class="r">Rentab.</th><th class="r">vs S&amp;P</th><th class="r">Sharpe</th><th class="r">Caída máx.</th><th class="r">Efectivo</th><th class="r">Pos.</th><th class="r">Órdenes</th><th class="r">Aciertos</th><th class="r">Costes</th><th class="r">Días</th></tr></thead><tbody>${rows}</tbody></table></div>` +
+    `<p style="color:var(--mut);font-size:11px;margin:8px 0 0">Cada cartera parte del mismo capital y usa el mismo análisis, precios y noticias; solo cambian los parámetros (carteras.json). Pulsa una fila para ver qué cambia. Con pocos días las diferencias son ruido: espera semanas antes de sacar conclusiones. ${(L.warnings ?? []).map(w => '⚠ ' + esc(w)).join(' ')}</p>`;
+  document.querySelectorAll('#lanes tr.lr').forEach(tr => tr.onclick = (e) => { if (e.target.closest('.sym')) return; const d = $('ld-' + tr.dataset.id); const open = d.style.display === 'none'; d.style.display = open ? '' : 'none'; open ? LANES_OPEN.add(tr.dataset.id) : LANES_OPEN.delete(tr.dataset.id); });
+  // gráfico: todas las carteras (y el S&P 500) en base 100 desde el primer día en que todas existen
+  const starts = lanes.map(l => l.daily[0]?.d).filter(Boolean);
+  if (!starts.length || typeof Chart === 'undefined') return;
+  const from = starts.sort().at(-1);
+  const days = [...new Set(lanes.flatMap(l => l.daily.map(p => p.d)).filter(d => d >= from))].sort();
+  if (days.length < 2) { $('lanesCanvas').parentElement.style.height = 'auto'; $('lanesCanvas').parentElement.innerHTML = '<p style="color:var(--mut);font-size:12px;margin:0">El gráfico aparece cuando haya al menos dos días de datos de todas las carteras.</p>'; return; }
+  const series = (l, key) => { const pts = l.daily.filter(p => p.d >= from); const base = pts[0]?.[key]; const m = new Map(pts.map(p => [p.d, +(p[key] / base * 100).toFixed(2)])); return days.map(d => m.get(d) ?? null); };
+  const colors = ['#4da3ff', '#1a9d5b', '#f5a524', '#d64545', '#9b59b6', '#17a2b8', '#e67e22'];
+  const ds = lanes.map((l, i) => ({ label: l.name, data: series(l, 'equity'), borderColor: colors[i % colors.length], borderWidth: i === 0 ? 2.4 : 1.6, pointRadius: 0, spanGaps: true, tension: 0.1 }));
+  ds.push({ label: 'S&P 500 (SPY)', data: series(lanes[0], 'spy'), borderColor: '#888', borderDash: [4, 3], borderWidth: 1.3, pointRadius: 0, spanGaps: true });
+  if (lanesChart) { lanesChart.destroy(); lanesChart = null; }
+  lanesChart = new Chart($('lanesCanvas'), { type: 'line', data: { labels: days.map(d => d.slice(5).split('-').reverse().join('/')), datasets: ds }, options: { responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { labels: { boxWidth: 10, font: { size: 11 } } } }, scales: { x: { ticks: { maxTicksLimit: 8, font: { size: 10 } } }, y: { ticks: { font: { size: 10 } } } } } });
+}
+let LANES_URL = null;
+async function loadLanes() { try { const r = await fetch(STATIC ? stateUrl().replace('state.json', 'carteras.json') : '/api/carteras'); if (!r.ok) throw new Error(); renderLanes(await r.json()); } catch { $('lanesCard').style.display = 'none'; } }
 
 
 // ---------- Mandato (parámetros activos de la cartera) ----------
@@ -693,7 +743,7 @@ async function loadStatic() {
     eqChart.data.labels = []; eqChart.data.datasets.forEach(d => d.data = []);
     s.curve.forEach(addPoint); eqChart.update();
     renderPortfolio(s.portfolio); renderRisk(s.risk, s.portfolio); renderMarket(s.quotes, s.market);
-    renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); renderScore(s.scorecard); renderBanner(s); renderDaily(s.daily); renderMacro(s.macro); renderPerf(s.performance); renderJournal(s.journal); renderMandate(s.mandate);
+    renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); renderScore(s.scorecard); renderBanner(s); renderDaily(s.daily); renderMacro(s.macro); renderPerf(s.performance); renderJournal(s.journal); renderMandate(s.mandate); loadLanes();
     $('live').textContent = '● publicado ' + ago(s.updatedAt); $('live').className = (Date.now() - s.updatedAt < 3 * 3600e3 ? 'up' : 'down');
   };
   await refresh();
