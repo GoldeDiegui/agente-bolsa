@@ -17,7 +17,7 @@ const TARGET_WEIGHT_PCT = () => M.riesgo.targetWeightPct;
 const ENTRY_PCT = () => M.compras.entryPct;
 const MAX_BUYS_PER_REVIEW = () => M.compras.maxPerReview;
 const MIN_CONFIDENCE = () => M.compras.minConfidence;
-const MIN_COVERAGE = Number(process.env.MIN_COVERAGE ?? M.analisis.minCoverage); // hasta tener analizado este % del universo no se compara con el sector ni se opera por tesis
+const MIN_COVERAGE = () => Number(process.env.MIN_COVERAGE ?? M.analisis.minCoverage); // hasta tener analizado este % del universo no se compara con el sector ni se opera por tesis
 const MIN_HOLD_MS = () => M.compras.minHoldHours * 3600e3; // no vende por tesis en las primeras horas (evita comprar y vender seguido)
 const ROTATION_GAP = () => Number(process.env.ROTATION_GAP ?? M.rotacion.gap);
 const ROTATION_MIN_HOLD_MS = () => M.rotacion.minHoldDays * 24 * 3600e3;
@@ -89,7 +89,7 @@ export function autonomousReview() {
 
   // 2) La tesis de lo que tengo: ¿sigue teniendo sentido?
   const cov = analysisCoverage();
-  const ready = cov.analyzed >= cov.total * MIN_COVERAGE; // con pocos valores analizados las medianas del sector no son fiables
+  const ready = cov.analyzed >= cov.total * MIN_COVERAGE(); // con pocos valores analizados las medianas del sector no son fiables
   for (const p of ready ? getSummary().positions : []) {
     if (sold.has(p.symbol) || Date.now() - lastBuyAt(p.symbol) < MIN_HOLD_MS()) continue;
     const a = analyze(p.symbol);
@@ -214,7 +214,7 @@ export function autonomousReview() {
   }
   else if (suspectSkips.length) head = `Sin cambios: ${suspectSkips.join(', ')} ha caído de golpe y podría ser un split sin verificar; no se vende por stop-loss hasta confirmar con los datos de eventos.`;
   else if (closedSkips) head = `Sin cambios: ${closedSkips} decisión(es) pendientes de que abra el mercado de ese valor.`;
-  else if (!ready && !ALLOW_MOMENTUM_ONLY()) head = `Sin cambios: el análisis fundamental aún cubre ${cov.analyzed}/${cov.total} valores y necesito al menos ${Math.ceil(cov.total * MIN_COVERAGE)} para comparar cada empresa con su sector. El gestor espera antes de comprar o vender por tesis (la gestión de riesgo sigue activa).`;
+  else if (!ready && !ALLOW_MOMENTUM_ONLY()) head = `Sin cambios: el análisis fundamental aún cubre ${cov.analyzed}/${cov.total} valores y necesito al menos ${Math.ceil(cov.total * MIN_COVERAGE())} para comparar cada empresa con su sector. El gestor espera antes de comprar o vender por tesis (la gestión de riesgo sigue activa).`;
   else {
     const top = rank({ limit: 3, verdicts: ['Atractiva', 'Neutral', 'Cara', 'Precaución', 'Evitar'], minConfidence: MIN_CONFIDENCE() });
     head = `Sin cambios: ningún valor cumple ahora los criterios (tesis atractiva, sin resultados inminentes y sin riesgo grave en titulares).` +

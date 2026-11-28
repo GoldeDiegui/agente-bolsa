@@ -7,19 +7,19 @@ import { M } from './mandato.js';
 
 // prioridad: variable de entorno > mandato.json > valor por defecto
 const num = (name, def) => { const v = Number(process.env[name]); return Number.isFinite(v) && process.env[name] !== '' && process.env[name] != null ? v : def; };
-const K = M.costes;
-export const SIMPLE = (process.env.COST_MODEL || M.costes.modelo) === 'simple';
+// se leen en cada uso: cada cartera en paralelo puede tener sus propios costes
+export const isSimple = () => (process.env.COST_MODEL || M.costes.modelo) === 'simple';
 
 export const COST = {
-  usPerShare: num('COST_US_PER_SHARE', K.usPerShare), usMin: num('COST_US_MIN', K.usMin), usMaxPct: num('COST_US_MAX_PCT', K.usMaxPct), // EE. UU.: 0,005 US$/acción, mín. 1 US$, máx. 1 %
-  esPct: num('COST_ES_PCT', K.esPct), esMin: num('COST_ES_MIN', K.esMin),                                                  // España: 0,10 %, mín. 2 US$ equivalentes
-  fxBps: num('COST_FX_BPS', K.fxBps),            // cambio EUR↔USD: 0,15 % en cada operación del IBEX
-  itfEsPct: num('COST_ITF_ES_PCT', K.itfEsPct),    // impuesto sobre transacciones financieras: 0,2 % en las compras de acciones españolas grandes
-  maxPartPct: num('COST_MAX_PARTICIPATION_PCT', K.maxParticipationPct), // una orden no puede superar el 5 % del volumen diario medio
-  impactK: num('COST_IMPACT_K', K.impactK),       // impacto de mercado ≈ k · volatilidad diaria · √(participación)
-  slipCapBps: num('COST_SLIP_CAP_BPS', K.slipCapBps),
-  divTaxUS: num('DIV_TAX_US', K.divTaxUS),          // retención en origen sobre dividendos de EE. UU. (con convenio, W-8BEN)
-  divTaxES: num('DIV_TAX_ES', K.divTaxES),          // retención sobre dividendos españoles
+  get usPerShare() { return num('COST_US_PER_SHARE', M.costes.usPerShare); }, get usMin() { return num('COST_US_MIN', M.costes.usMin); }, get usMaxPct() { return num('COST_US_MAX_PCT', M.costes.usMaxPct); }, // EE. UU.: 0,005 US$/acción, mín. 1 US$, máx. 1 %
+  get esPct() { return num('COST_ES_PCT', M.costes.esPct); }, get esMin() { return num('COST_ES_MIN', M.costes.esMin); },                                                  // España: 0,10 %, mín. 2 US$ equivalentes
+  get fxBps() { return num('COST_FX_BPS', M.costes.fxBps); },                      // cambio EUR↔USD: 0,15 % en cada operación del IBEX
+  get itfEsPct() { return num('COST_ITF_ES_PCT', M.costes.itfEsPct); },            // impuesto sobre transacciones financieras: 0,2 % en las compras de acciones españolas
+  get maxPartPct() { return num('COST_MAX_PARTICIPATION_PCT', M.costes.maxParticipationPct); }, // una orden no puede superar el 5 % del volumen diario medio
+  get impactK() { return num('COST_IMPACT_K', M.costes.impactK); },                // impacto de mercado ≈ k · volatilidad diaria · √(participación)
+  get slipCapBps() { return num('COST_SLIP_CAP_BPS', M.costes.slipCapBps); },
+  get divTaxUS() { return num('DIV_TAX_US', M.costes.divTaxUS); },                 // retención en origen sobre dividendos de EE. UU.
+  get divTaxES() { return num('DIV_TAX_ES', M.costes.divTaxES); },                 // retención sobre dividendos españoles
 };
 
 // Semi-diferencial en puntos básicos según el volumen diario negociado (en US$)
@@ -31,7 +31,7 @@ export function halfSpreadBps(advUsd) {
 // q: cotización (price en USD, priceNative en moneda original). Devuelve lo que costaría esa orden.
 export function costsFor({ symbol, side, shares, q, limitFill = false }) {
   const ref = q.price;
-  if (SIMPLE) return { ref, exec: ref, gross: ref * shares, fee: 1, fx: 0, tax: 0, slip: 0, slipBps: 0, maxShares: Infinity, total: 1, model: 'simple' };
+  if (isSimple()) return { ref, exec: ref, gross: ref * shares, fee: 1, fx: 0, tax: 0, slip: 0, slipBps: 0, maxShares: Infinity, total: 1, model: 'simple' };
   const es = q.market === 'IBEX 35';
   const fxFactor = q.priceNative ? q.price / q.priceNative : 1;
   const adv = getTech(symbol)?.advNative;
@@ -51,7 +51,7 @@ export function costsFor({ symbol, side, shares, q, limitFill = false }) {
   return { ref, exec, gross, fee, fx, tax, slip, slipBps: +slipBps.toFixed(1), maxShares, shares: n, total: fee + fx + tax, model: 'realista', partial: n < shares };
 }
 
-export const dividendTaxPct = (market) => (SIMPLE ? 0 : market === 'IBEX 35' ? COST.divTaxES : COST.divTaxUS);
+export const dividendTaxPct = (market) => (isSimple() ? 0 : market === 'IBEX 35' ? COST.divTaxES : COST.divTaxUS);
 
 // Resumen de costes acumulados a partir de las órdenes y los eventos
 export function costSummary(orders, events, initialCash) {
@@ -60,5 +60,5 @@ export function costSummary(orders, events, initialCash) {
   for (const e of events) if (e.type === 'dividend') s.dividendTax += e.tax ?? 0;
   const total = s.commissions + s.slippage + s.fx + s.taxes + s.dividendTax;
   const r = (v) => +v.toFixed(2);
-  return { total: r(total), commissions: r(s.commissions), slippage: r(s.slippage), fx: r(s.fx), taxes: r(s.taxes), dividendTax: r(s.dividendTax), pctOfCapital: +((total / initialCash) * 100).toFixed(3), model: SIMPLE ? 'simple' : 'realista' };
+  return { total: r(total), commissions: r(s.commissions), slippage: r(s.slippage), fx: r(s.fx), taxes: r(s.taxes), dividendTax: r(s.dividendTax), pctOfCapital: +((total / initialCash) * 100).toFixed(3), model: isSimple() ? 'simple' : 'realista' };
 }

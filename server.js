@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -88,6 +89,10 @@ app.get('/api/chart/:symbol', async (req, res) => {
   catch (e) { res.status(502).json({ error: e.message }); }
 });
 app.get('/api/macro', (_req, res) => res.json(macroSummary()));
+app.get('/api/carteras', (_req, res) => { // solo existe si se ha ejecutado un ciclo (cycle.js) con carteras en paralelo
+  const f = path.join(process.env.SITE_DIR || path.join(__dirname, 'site'), 'carteras.json');
+  fs.existsSync(f) ? res.type('json').send(fs.readFileSync(f)) : res.status(404).json({ error: 'sin carteras en paralelo' });
+});
 app.get('/api/mandate', (_req, res) => res.json(mandateInfo()));
 app.get('/api/journal', (_req, res) => res.json(journalReport()));
 app.get('/api/performance', (_req, res) => res.json(performanceReport()));

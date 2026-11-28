@@ -158,7 +158,7 @@ export function validate(raw) {
 }
 
 // ---- carga ----
-const state = { M: defaults(), info: { file: MANDATE_FILE, found: false, warnings: [], changed: [], hash: null, loadedAt: null } };
+const state = { M: defaults(), info: { file: MANDATE_FILE, found: false, warnings: [], changed: [], hash: null, loadedAt: null }, rawMain: {} };
 export const M = state.M; // objeto vivo: se rellena en sitio para que las importaciones lo vean
 
 function apply(values, info) {
@@ -171,12 +171,38 @@ export function loadMandate(file = MANDATE_FILE) {
   try {
     if (fs.existsSync(file)) { found = true; raw = JSON.parse(fs.readFileSync(file, 'utf8')); }
   } catch (e) { warnings.push(`No se pudo leer ${path.basename(file)} (${e.message}): se usan los valores por defecto`); raw = null; }
+  state.rawMain = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const v = validate(raw ?? {});
   const hash = crypto.createHash('sha1').update(JSON.stringify(v.values)).digest('hex').slice(0, 8);
   apply(v.values, { file, found, warnings: [...warnings, ...v.warnings], changed: v.changed, hash, loadedAt: Date.now() });
   return state.info;
 }
-// Para pruebas y para carteras en paralelo: aplica un objeto ya preparado
+// Mezcla en profundidad: lo de `over` pisa a `base` (las listas se sustituyen enteras)
+export function deepMerge(base, over) {
+  if (!over || typeof over !== 'object' || Array.isArray(over)) return over === undefined ? base : over;
+  const out = { ...(base && typeof base === 'object' && !Array.isArray(base) ? base : {}) };
+  for (const [k, v] of Object.entries(over)) out[k] = v && typeof v === 'object' && !Array.isArray(v) ? deepMerge(out[k], v) : v;
+  return out;
+}
+// Carteras en paralelo: el mandato de una cartera = mandato principal + sus cambios. Devuelve los avisos de esos cambios.
+export function useLaneMandate(overrides = {}, label = null) {
+  const v = validate(deepMerge(state.rawMain, overrides));
+  const name = label ?? v.values.nombre;
+  v.values.nombre = name;
+  const hash = crypto.createHash('sha1').update(JSON.stringify(v.values)).digest('hex').slice(0, 8);
+  apply(v.values, { file: null, found: true, warnings: v.warnings, changed: v.changed, hash, loadedAt: Date.now() });
+  return state.info;
+}
+export function useMainMandate() { return useLaneMandate({}, null); }
+export const mandateHash = () => state.info.hash;
+// Parámetros de `overrides` que realmente cambian algo respecto al mandato principal
+export function diffFromMain(overrides = {}) {
+  const base = validate(state.rawMain).values, lane = validate(deepMerge(state.rawMain, overrides)).values;
+  const rows = [];
+  for (const s of SCHEMA) { const a = getIn(base, s.path), b = getIn(lane, s.path); if (!same(a, b)) rows.push({ path: s.path, main: a, value: b, desc: s.desc }); }
+  return rows;
+}
+// Para pruebas: aplica un objeto ya preparado
 export function setMandate(raw) {
   const v = validate(raw);
   apply(v.values, { file: null, found: true, warnings: v.warnings, changed: v.changed, hash: crypto.createHash('sha1').update(JSON.stringify(v.values)).digest('hex').slice(0, 8), loadedAt: Date.now() });

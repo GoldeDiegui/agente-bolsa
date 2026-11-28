@@ -13,6 +13,7 @@ import { refreshTech, exportCharts, techCount } from './technicals.js';
 import { dailySummary } from './daily.js';
 import { performanceReport } from './performance.js';
 import { mandateInfo } from './mandato.js';
+import { runLanes, exportLanes } from './carteras.js';
 for (const w of mandateInfo().warnings) console.log(`::warning title=mandato.json::${w}`); // aparece como aviso amarillo en Actions
 import { journalReport, refreshPostExit, recentClosedSymbols } from './journal.js';
 import { refreshVolatility, refreshRegime, regimeSummary } from './volatility.js';
@@ -43,6 +44,7 @@ const worklist = {
   getShortlist: () => shortlist(60).filter((s) => mode !== 'trade' || !ENFORCE || openSet.has(UNIVERSE.find((u) => u.symbol === s)?.market)).slice(0, 30),
 };
 
+let lanesResult = null;
 try {
   // 1) Datos primero: así la lista de candidatos ya incluye lo recién analizado
   const n = await runFundamentalsBudget(worklist, FUND_BUDGET_MS);
@@ -99,6 +101,10 @@ try {
     if (traded > 0 || Date.now() - last > LOG_EVERY_MS) addAgentLog({ t: Date.now(), summary });
     log(traded ? `${traded} operación(es):` : 'Sin operaciones:', summary);
   }
+  // 5) Carteras en paralelo (carteras.json): mismas cotizaciones y análisis, mandatos distintos
+  lanesResult = await runLanes({ trade: mode === 'trade', logEveryMs: LOG_EVERY_MS, log });
+  if (lanesResult.lanes.length > 1) log(`Carteras en paralelo: ${lanesResult.lanes.slice(1).map((l) => `${l.id} ${l.totalReturnPct >= 0 ? '+' : ''}${l.totalReturnPct} %`).join(' · ')}`);
+  for (const w of lanesResult.warnings) console.log(`::warning title=carteras.json::${w}`);
 } catch (e) {
   console.error('Error en el ciclo:', e);
   process.exitCode = 1;
@@ -135,6 +141,7 @@ function exportSite() {
   fs.writeFileSync(path.join(SITE_DIR, 'analyses.json'), JSON.stringify({ updatedAt: Date.now(), analyses: all }));
   fs.writeFileSync(path.join(SITE_DIR, 'financials.json'), JSON.stringify(exportStatements()));
   fs.writeFileSync(path.join(SITE_DIR, 'charts.json'), JSON.stringify(exportCharts()));
+  if (lanesResult) exportLanes(lanesResult, SITE_DIR);
   const curve = getEquityCurve();
   const step = Math.max(1, Math.ceil(curve.length / 700));
   const now = Date.now();

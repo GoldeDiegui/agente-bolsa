@@ -1,0 +1,33 @@
+{
+  "_ayuda": "Carteras en paralelo: cada una usa el mandato de mandato.json con los cambios que pongas en «mandato». Las claves son las mismas que en mandato.json (node mandato.js parametros). Máximo 6. Para quitar una, pon \"activa\": false o bórrala (su historial se conserva). El capital inicial es el de la principal.",
+  "carteras": [
+    {
+      "id": "prudente",
+      "nombre": "Prudente",
+      "descripcion": "Compras más pequeñas, más efectivo y stops más ajustados",
+      "mandato": {
+        "compras": { "entryPct": 5 },
+        "efectivo": { "floorPct": 25 },
+        "riesgo": { "stopMaxPct": 10, "maxPositionPct": 20, "overweightPct": 18, "targetWeightPct": 14 }
+      }
+    },
+    {
+      "id": "agresiva",
+      "nombre": "Agresiva",
+      "descripcion": "Compras grandes, poco efectivo y stops más amplios",
+      "mandato": {
+        "compras": { "entryPct": 12, "maxPerReview": 4 },
+        "efectivo": { "floorPct": 8, "floorCautionPct": 12, "floorBearPct": 15 },
+        "riesgo": { "stopMaxPct": 20, "takeProfitMinPct": 25 }
+      }
+    },
+    {
+      "id": "calidad",
+      "nombre": "Calidad y crecimiento",
+      "descripcion": "Mismo riesgo que la principal, pero puntúa más la calidad y el crecimiento que la valoración",
+      "mandato": {
+        "pesos": { "valuation": 15, "growth": 30, "quality": 28 }
+      }
+    }
+  ]
+}

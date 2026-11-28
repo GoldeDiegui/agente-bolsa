@@ -15,7 +15,9 @@ const maxPositionPct = () => M.riesgo.maxPositionPct / 100; // límite de riesgo
 
 // --- Persistencia: la cartera se guarda en data/state.json y se recupera al arrancar ---
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data', 'state.json');
+const MAIN_FILE = process.env.DATA_FILE || path.join(__dirname, 'data', 'state.json');
+export const MAIN_STATE_FILE = MAIN_FILE;
+let DATA_FILE = MAIN_FILE; // fichero de la cartera activa (las carteras en paralelo se intercambian con useBook)
 
 const freshState = () => ({
   initialCash: INITIAL_CASH,
@@ -65,6 +67,21 @@ function load() {
     try { fs.renameSync(DATA_FILE, DATA_FILE + '.corrupto'); } catch { /* ignorar */ }
   }
 }
+
+// Carteras en paralelo: cambia la cartera activa (guarda la actual, carga la otra o crea una nueva con el capital del mandato vigente).
+// Precios, fundamentales y noticias son compartidos; lo que cambia es el estado (efectivo, posiciones, órdenes, diario) y el mandato.
+let activeBook = 'principal';
+export const activeBookId = () => activeBook;
+export function useBook(id, file = MAIN_FILE) {
+  if (id === activeBook && file === DATA_FILE) return;
+  flushState();
+  activeBook = id; DATA_FILE = file;
+  INITIAL_CASH = M.capital.initialCash;
+  state = freshState();
+  load();
+}
+let extraWatched = () => [];
+export const setExtraWatched = (fn) => { extraWatched = fn; }; // valores de otras carteras que también hay que mantener al día
 
 let saveTimer = null;
 function saveNow() {
@@ -194,7 +211,7 @@ export function snapshot() {
 }
 
 // Símbolos que hay que refrescar en cada ciclo: posiciones abiertas y valores con orden límite pendiente
-export const getWatchedSymbols = () => [...new Set([...Object.keys(state.positions), ...state.pending.map((o) => o.symbol)])];
+export const getWatchedSymbols = () => [...new Set([...Object.keys(state.positions), ...state.pending.map((o) => o.symbol), ...extraWatched()])];
 
 // ---------- Órdenes límite ----------
 // Compra: se ejecuta cuando el precio baja a (o por debajo de) el límite.

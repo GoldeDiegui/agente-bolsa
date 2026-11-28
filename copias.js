@@ -55,9 +55,14 @@ export function backup(estadoDir, copiasDir, now = Date.now()) {
   const dir = path.join(copiasDir, 'diarias', day);
   let bytes = 0;
   for (const f of DAILY_FILES) { const src = path.join(data, f); if (fs.existsSync(src)) bytes += gz(src, path.join(dir, f + '.gz')); }
+  // carteras en paralelo (carteras/<id>.json)
+  const lanesDir = path.join(data, 'carteras');
+  const laneFiles = fs.existsSync(lanesDir) ? fs.readdirSync(lanesDir).filter((f) => /^[a-z0-9-]+\.json$/.test(f)) : [];
+  for (const f of laneFiles) bytes += gz(path.join(lanesDir, f), path.join(dir, 'carteras', f + '.gz'));
   if (weekly) {
     const wdir = path.join(copiasDir, 'semanales', day);
     for (const f of [...DAILY_FILES, ...WEEKLY_EXTRA]) { const src = path.join(data, f); if (fs.existsSync(src)) gz(src, path.join(wdir, f + '.gz')); }
+    for (const f of laneFiles) gz(path.join(lanesDir, f), path.join(wdir, 'carteras', f + '.gz'));
   }
   const removed = pruneOld(copiasDir);
   // índice: qué copias hay y qué contenía cada una
@@ -90,6 +95,8 @@ export function restore(copiasDir, estadoDir, which = 'ultima', now = Date.now()
   for (const d of prevs.slice(0, Math.max(0, prevs.length - 10))) fs.rmSync(path.join(copiasDir, 'previas', d), { recursive: true, force: true });
   const restored = [];
   for (const f of fs.readdirSync(src)) if (f.endsWith('.json.gz')) { gunzip(path.join(src, f), path.join(data, f.slice(0, -3))); restored.push(f.slice(0, -3)); }
+  const lsrc = path.join(src, 'carteras');
+  if (fs.existsSync(lsrc)) for (const f of fs.readdirSync(lsrc)) if (/^[a-z0-9-]+\.json\.gz$/.test(f)) { gunzip(path.join(lsrc, f), path.join(data, 'carteras', f.slice(0, -3))); restored.push('carteras/' + f.slice(0, -3)); }
   return { ok: true, kind, date, restored, ...info };
 }
 
@@ -97,7 +104,7 @@ const README_COPIAS = `# Copias de seguridad del gestor de cartera
 
 Se generan solas cada día (flujo «Copias de seguridad»). Esta rama no la lee la web.
 
-- diarias/AAAA-MM-DD/: state.json.gz (cartera, órdenes, diario) y scorecard.json.gz (marcador de aciertos). Últimos 30 días.
+- diarias/AAAA-MM-DD/: state.json.gz (cartera, órdenes, diario), scorecard.json.gz (marcador de aciertos) y carteras/*.json.gz (carteras en paralelo). Últimos 30 días.
 - semanales/AAAA-MM-DD/: lo anterior más fundamentals.json.gz, de los lunes. Últimas 26 semanas.
 - previas/: lo que había justo antes de cada restauración.
 - indice.json: lista de copias con el patrimonio, operaciones y posiciones de cada una.

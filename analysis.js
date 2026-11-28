@@ -4,7 +4,7 @@ import { UNIVERSE, getQuote } from './market.js';
 import { getFundamentals, getNews, getEstimates, getNextEarnings, getInsiders, getOwnership, fundamentalsStats } from './fundamentals.js';
 import { getTech } from './technicals.js';
 import { sourceWeight } from './news.js';
-import { M, weights } from './mandato.js';
+import { M, weights, mandateHash } from './mandato.js';
 
 const BY = new Map(UNIVERSE.map((u) => [u.symbol, u]));
 const DAY = 86400e3;
@@ -305,7 +305,6 @@ export function shortScore(o) {
 
 // ---------- análisis completo ----------
 // Pesos relativos (se normalizan a 1): fundamentales ≈ 70 %, momentum ≈ 10 %, directivos ≈ 5 %, resto de señales de mercado
-const WEIGHTS = weights(); // pesos del mandato, normalizados para sumar 1
 const memo = new Map();
 
 export function analyze(symbol) {
@@ -314,9 +313,9 @@ export function analyze(symbol) {
   // se reutiliza el resultado solo si no han llegado datos nuevos (fundamentales o noticias) y es reciente
   const f = getFundamentals(symbol), n = getNews(symbol), e = getEstimates(symbol), tk = getTech(symbol)?.fetchedAt ?? null, ih = getInsiders(symbol), ow = getOwnership(symbol);
   const hit = memo.get(symbol);
-  if (hit && hit.f === f && hit.n === n && hit.e === e && hit.tk === tk && hit.ih === ih && hit.ow === ow && Date.now() - hit.t < 60e3) return hit.a;
+  if (hit && hit.f === f && hit.n === n && hit.e === e && hit.tk === tk && hit.ih === ih && hit.ow === ow && hit.mh === mandateHash() && Date.now() - hit.t < 60e3) return hit.a;
   const a = compute(u);
-  memo.set(symbol, { t: Date.now(), a, f, n, e, tk, ih, ow });
+  memo.set(symbol, { t: Date.now(), a, f, n, e, tk, ih, ow, mh: mandateHash() });
   return a;
 }
 
@@ -342,7 +341,7 @@ function compute(u) {
     if (off <= -20) reasons.push({ type: 'info', text: `Cotiza un ${fmt(-off, 0)} % por debajo de su máximo de 52 semanas` });
   }
 
-  const present = Object.entries(WEIGHTS).filter(([k]) => scores[k] != null);
+  const present = Object.entries(weights()).filter(([k]) => scores[k] != null);
   const wsum = present.reduce((s, [, w]) => s + w, 0);
   const confidence = wsum; // 0..1: qué parte del modelo tiene datos
   const score = wsum ? present.reduce((s, [k, w]) => s + scores[k] * w, 0) / wsum : null;

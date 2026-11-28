@@ -240,3 +240,15 @@ Todos los parámetros del gestor están en un único fichero, `mandato.json`, en
 - **Capital inicial**: solo se aplica al crear o reiniciar la cartera (se guarda en el estado). Cambiarlo con la cartera en marcha no altera la actual.
 - **Versionado**: sube `version` (y cambia `nombre`) cuando cambies parámetros; el diario guarda con qué mandato se hizo cada compra.
 - Las variables de entorno antiguas (`COST_*`, `ROTATION_GAP`, `MIN_COVERAGE`…) siguen funcionando y tienen prioridad sobre el fichero.
+
+## Carteras en paralelo
+
+Varias carteras virtuales con parámetros distintos compiten sobre **los mismos datos** (precios, análisis y noticias se descargan una sola vez). Se definen en `carteras.json`: cada una es el mandato principal (`mandato.json`) más los cambios que indiques, con las mismas claves.
+
+- Vienen tres de ejemplo: **Prudente** (compras pequeñas, 25 % de efectivo, stops más ajustados), **Agresiva** (compras grandes, poco efectivo, stops amplios) y **Calidad y crecimiento** (pesa menos la valoración). Edítalas, bórralas o añade hasta 6. `"activa": false` la pausa sin perder su historial.
+- Cada cartera tiene su propio efectivo, posiciones, órdenes, diario y curva, guardados en `carteras/<id>.json` (rama `estado`). El capital inicial es el de la principal, para poder comparar.
+- En cada ciclo el gestor procesa la principal y después las demás, cambiando de cartera y de mandato en memoria (mismas reglas, distintos parámetros). Sus valores se incluyen en la descarga de precios.
+- La web muestra la tarjeta **Carteras en paralelo**: gráfico en base 100 desde el primer día en que existen todas (con el S&P 500), tabla de rentabilidad, Sharpe, caída máxima, efectivo, operaciones, aciertos y costes, y por cartera qué parámetros cambian, sus posiciones y sus últimas operaciones. La tarjeta solo aparece si hay al menos una cartera además de la principal.
+- Errores en `carteras.json` (id repetido, clave desconocida, valores fuera de rango) se avisan en Actions y en la web, y nunca detienen la cartera principal. Un fallo en una cartera no afecta a las demás.
+- Las copias de seguridad diarias incluyen estas carteras.
+- Con pocos días las diferencias entre carteras son ruido; conviene esperar semanas antes de sacar conclusiones.
