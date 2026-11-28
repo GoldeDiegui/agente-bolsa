@@ -106,6 +106,11 @@
     <div id="lanes"></div>
   </section>
 
+  <section class="card c12" id="btCard" style="display:none">
+    <h2>Backtest de reglas de precio <span id="btSub" style="text-transform:none;letter-spacing:0"></span></h2>
+    <div id="bt"></div>
+  </section>
+
   <section class="card c12" id="perfCard" style="display:none">
     <h2>Rendimiento <span id="perfSince" style="text-transform:none;letter-spacing:0"></span></h2>
     <div id="perf"></div>
@@ -331,6 +336,54 @@ async function loadFin(sym) {
     renderFin(sym);
   } catch { if ($('fin')) $('fin').innerHTML = '<h4>Cuentas</h4><p style="color:var(--mut);font-size:12px">No se pudieron cargar las cuentas ahora mismo.</p>'; }
 }
+
+
+// ---------- Backtest de reglas basadas en precio ----------
+let BT = null, btMarket = null, btChart = null, btSel = new Set(['base', 'stopatr', 'gestor']);
+function renderBacktest(B) {
+  const card = $('btCard');
+  const ms = B ? Object.values(B.markets).filter(m => m && !m.error) : [];
+  if (!ms.length) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  BT = B; btMarket ??= ms[0].market; if (!ms.find(m => m.market === btMarket)) btMarket = ms[0].market;
+  const o = B.markets[btMarket];
+  const nf = (v, d = 1) => v == null ? '–' : Number(v).toLocaleString('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d });
+  const sp = (v, d = 1) => v == null ? '–' : (v > 0 ? '+' : '') + nf(v, d) + ' %';
+  const cl = (v) => v == null ? '' : v >= 0 ? 'up' : 'down';
+  $('btSub').textContent = `· calculado el ${new Date(B.generatedAt).toLocaleDateString('es-ES')} · ${o.from} → ${o.to}`;
+  const allM = [...o.variants.map(v => v.m), o.benchmark.m, o.equalWeight.m].filter(Boolean);
+  const bestSharpe = Math.max(...allM.map(m => m.sharpe ?? -99));
+  const row = (id, name, m, extra = '', desc = '') => `<tr class="br" data-id="${esc(id)}" style="${id ? 'cursor:pointer' : ''}" title="${esc(desc)}"><td>${id ? `<input type="checkbox" ${btSel.has(id) ? 'checked' : ''} style="margin-right:6px" tabindex="-1">` : ''}${esc(name)}</td>` +
+    `<td class="r ${cl(m.totalPct)}">${sp(m.totalPct)}</td><td class="r ${cl(m.cagrPct)}"><b>${sp(m.cagrPct)}</b></td><td class="r">${nf(m.volPct)} %</td><td class="r" style="${m.sharpe === bestSharpe ? 'font-weight:700;color:var(--up)' : ''}">${nf(m.sharpe, 2)}</td><td class="r down">${sp(m.maxDDPct)}</td>` +
+    (m.trades != null ? `<td class="r">${m.investedPct} %</td><td class="r">${m.trades}</td><td class="r">${m.stops}${m.whipsawPct != null && m.stops ? ` <span style="color:var(--mut)" title="Stops tras los que el precio subió más de un 5 % en 20 sesiones">(${m.whipsawPct} % rebotan)</span>` : ''}</td><td class="r">${m.turnoverPct} %</td>` : `<td class="r" colspan="4" style="color:var(--mut)">${extra}</td>`) + `</tr>`;
+  const main = o.variants.filter(v => v.group === 'main' && v.m), sens = o.variants.filter(v => v.group === 'sens' && v.m);
+  const yearly = (m) => m?.yearly ? Object.entries(m.yearly).map(([y, v]) => `${y}: <span class="${cl(v)}">${sp(v)}</span>`).join(' · ') : '';
+  const yRows = [[o.benchmark.name, o.benchmark.m], ...o.variants.filter(v => btSel.has(v.id) && v.m).map(v => [v.name, v.m])].map(([n, m]) => `<div style="margin-bottom:2px"><b>${esc(n)}</b> — ${yearly(m)}</div>`).join('');
+  $('bt').innerHTML =
+    `<div style="color:var(--mut);font-size:12px;margin-bottom:8px"><b>Cómo leerlo:</b> se simula con ${o.symbols} valores del ${esc(o.benchmark.name)} (cartera de ${o.topN} posiciones, rebalanceo mensual, costes de ${o.costBps} pb por operación) para ver qué reglas de riesgo aportan algo. No predice rentabilidades.</div>` +
+    `<details style="margin-bottom:10px;font-size:12px;color:var(--mut)"><summary style="cursor:pointer">Límites de este backtest (léelos antes de sacar conclusiones)</summary><ul style="margin:6px 0 0 18px;padding:0">${(B.caveats ?? []).map(c => `<li>${esc(c)}</li>`).join('')}</ul></details>` +
+    `<div style="margin-bottom:8px">${ms.map(m => `<button class="sec btm" data-m="${esc(m.market)}" style="padding:3px 12px;margin-right:6px;${m.market === btMarket ? 'background:var(--acc);color:#fff' : ''}">${esc(m.market)}</button>`).join('')}</div>` +
+    `<ul style="margin:0 0 10px 18px;padding:0;font-size:13px">${(o.findings ?? []).map(f => `<li>${esc(f)}</li>`).join('')}</ul>` +
+    `<div class="chartbox" style="height:260px;margin-bottom:6px"><canvas id="btCanvas"></canvas></div>` +
+    `<div style="font-size:11px;color:var(--mut);margin-bottom:8px">Marca o desmarca filas para comparar sus curvas (rentabilidad acumulada en %).</div>` +
+    `<div style="overflow-x:auto"><table style="width:100%;font-size:12px;white-space:nowrap"><thead><tr><th>Variante</th><th class="r">Total</th><th class="r">Anual</th><th class="r">Volatilidad</th><th class="r">Sharpe</th><th class="r">Caída máx.</th><th class="r">Invertido</th><th class="r">Operaciones</th><th class="r">Stops</th><th class="r">Rotación</th></tr></thead><tbody>` +
+    row('', o.benchmark.name + ' (referencia)', o.benchmark.m, 'comprar y mantener el índice') + row('', 'Todos los valores, equiponderada', o.equalWeight.m, 'sin elegir ni reglas de riesgo') +
+    main.map(v => row(v.id, v.name, v.m, '', v.desc)).join('') +
+    (sens.length ? `<tr><td colspan="10" style="color:var(--mut);padding-top:8px;font-size:11px;text-transform:uppercase;letter-spacing:.04em">Sensibilidad (¿cambia mucho el resultado si se tocan los parámetros?)</td></tr>` + sens.map(v => row(v.id, v.name, v.m, '', v.desc)).join('') : '') +
+    `</tbody></table></div>` +
+    (o.random?.runs ? `<p style="font-size:12px;margin:8px 0 0"><b>Frente al azar:</b> con las reglas del gestor y valores elegidos al azar (${o.random.runs} pruebas) el resultado anual es de ${sp(o.random.cagr.p50)} de mediana (${sp(o.random.cagr.p10)} a ${sp(o.random.cagr.p90)}); la selección por momentum supera al ${o.random.pctBelowMomentum} % de ellas.</p>` : '') +
+    `<div style="font-size:11px;color:var(--mut);margin-top:8px"><b>Rentabilidad por año</b><div style="margin-top:3px;line-height:1.6">${yRows}</div></div>`;
+  document.querySelectorAll('#bt .btm').forEach(b => b.onclick = () => { btMarket = b.dataset.m; renderBacktest(BT); });
+  document.querySelectorAll('#bt tr.br').forEach(tr => tr.onclick = () => { const id = tr.dataset.id; if (!id) return; btSel.has(id) ? btSel.delete(id) : btSel.add(id); renderBacktest(BT); });
+  if (typeof Chart === 'undefined') return;
+  const colors = ['#1a9d5b', '#f5a524', '#d64545', '#9b59b6', '#17a2b8', '#e67e22', '#8e44ad', '#2ecc71', '#c0392b'];
+  const labels = o.dates.map(d => d.slice(2, 7).split('-').reverse().join('/'));
+  const ds = [{ label: o.benchmark.name, data: o.benchmark.curve, borderColor: '#4da3ff', borderWidth: 2, pointRadius: 0 }, { label: 'Equiponderada', data: o.equalWeight.curve, borderColor: '#888', borderDash: [4, 3], borderWidth: 1.3, pointRadius: 0 }];
+  o.variants.filter(v => btSel.has(v.id)).forEach((v, i) => ds.push({ label: v.name, data: v.curve, borderColor: colors[i % colors.length], borderWidth: 1.6, pointRadius: 0 }));
+  if (btChart) { btChart.destroy(); btChart = null; }
+  btChart = new Chart($('btCanvas'), { type: 'line', data: { labels, datasets: ds }, options: { responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { labels: { boxWidth: 10, font: { size: 11 } } } }, scales: { x: { ticks: { maxTicksLimit: 8, font: { size: 10 } } }, y: { ticks: { font: { size: 10 }, callback: (v) => v + ' %' } } } } });
+}
+async function loadBacktest() { try { const r = await fetch(STATIC ? stateUrl().replace('state.json', 'backtest.json') : '/api/backtest'); if (!r.ok) throw new Error(); renderBacktest(await r.json()); } catch { $('btCard').style.display = 'none'; } }
 
 
 // ---------- Carteras en paralelo ----------
@@ -743,7 +796,7 @@ async function loadStatic() {
     eqChart.data.labels = []; eqChart.data.datasets.forEach(d => d.data = []);
     s.curve.forEach(addPoint); eqChart.update();
     renderPortfolio(s.portfolio); renderRisk(s.risk, s.portfolio); renderMarket(s.quotes, s.market);
-    renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); renderScore(s.scorecard); renderBanner(s); renderDaily(s.daily); renderMacro(s.macro); renderPerf(s.performance); renderJournal(s.journal); renderMandate(s.mandate); loadLanes();
+    renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); renderScore(s.scorecard); renderBanner(s); renderDaily(s.daily); renderMacro(s.macro); renderPerf(s.performance); renderJournal(s.journal); renderMandate(s.mandate); loadLanes(); if (!BT) loadBacktest();
     $('live').textContent = '● publicado ' + ago(s.updatedAt); $('live').className = (Date.now() - s.updatedAt < 3 * 3600e3 ? 'up' : 'down');
   };
   await refresh();
@@ -756,7 +809,7 @@ async function load() {
   initCharts();
   s.curve.forEach(addPoint); eqChart.update();
   renderPortfolio(s.portfolio); renderRisk(s.risk, s.portfolio); renderMarket(s.quotes, s.market);
-  renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); setInterval(loadOpps, 30000); loadDaily(); setInterval(loadDaily, 60000); loadPerf(); setInterval(loadPerf, 120000); loadJournal(); setInterval(loadJournal, 60000); loadMandate(); loadMacro(); setInterval(loadMacro, 120000); loadScore(); setInterval(loadScore, 600000);
+  renderOrders(s.orders, s.events); renderPending(s.pending); renderAgentLog(s.agentLog); renderCoverage(s.analysis); loadOpps(); setInterval(loadOpps, 30000); loadDaily(); setInterval(loadDaily, 60000); loadPerf(); setInterval(loadPerf, 120000); loadJournal(); setInterval(loadJournal, 60000); loadMandate(); loadBacktest(); loadMacro(); setInterval(loadMacro, 120000); loadScore(); setInterval(loadScore, 600000);
   if (s.agentMode === 'reglas') addMsg('Modo gratuito: soy un gestor basado en reglas (stop-loss -8%, toma de beneficios +15%, máx. 25% por valor, 15% de efectivo mínimo). Decido con análisis fundamental (valoración frente al sector, crecimiento, calidad, analistas, resultados y noticias). Prueba "oportunidades", "analiza apple", "¿está cara nvidia?", "por qué compraste X", "revisa la cartera" o "estado de los datos". Revisión automática cada 5 minutos.', 'a');
 
   const es = new EventSource('/api/stream');
