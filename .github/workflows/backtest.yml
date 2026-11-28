@@ -1,0 +1,58 @@
+# Backtest de las reglas basadas en precio (stop por volatilidad, filtros de tendencia y de mercado, momentum...) sobre ~5 años de histórico.
+# Se ejecuta el día 1 de cada mes y a mano (Actions → Backtest → Run workflow). El resultado va a la rama "estado" (site/backtest.json) y la web lo muestra.
+name: Backtest
+
+on:
+  schedule:
+    - cron: '30 3 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Comparte turno con el gestor para no pisar el estado
+concurrency:
+  group: gestor
+  cancel-in-progress: false
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Recuperar el estado (rama estado)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          if git ls-remote --exit-code --heads "$REMOTE" estado >/dev/null 2>&1; then
+            git clone --quiet --depth 1 --branch estado "$REMOTE" estado
+          else
+            mkdir -p estado/data
+            git -C estado init --quiet -b estado
+            git -C estado remote add origin "$REMOTE"
+          fi
+
+      - name: Ejecutar el backtest
+        env:
+          DATA_FILE: ${{ github.workspace }}/estado/data/state.json
+          SITE_DIR: ${{ github.workspace }}/estado/site
+          NO_SIMULATION: '1'
+        run: node backtest.js --out "$SITE_DIR/backtest.json"
+
+      - name: Guardar el resultado
+        working-directory: estado
+        run: |
+          git config user.name "gestor-bot"
+          git config user.email "gestor-bot@users.noreply.github.com"
+          git add -A
+          if git rev-parse --verify HEAD >/dev/null 2>&1 && [ -z "$(git status --porcelain)" ]; then echo "Sin cambios."; exit 0; fi
+          MSG="Backtest $(date -u +'%Y-%m-%d %H:%M') UTC"
+          if git rev-parse --verify HEAD >/dev/null 2>&1; then git commit --quiet --amend -m "$MSG"; else git commit --quiet -m "$MSG"; fi
+          git push --quiet --force origin HEAD:estado
