@@ -93,6 +93,10 @@ app.get('/api/carteras', (_req, res) => { // solo existe si se ha ejecutado un c
   const f = path.join(process.env.SITE_DIR || path.join(__dirname, 'site'), 'carteras.json');
   fs.existsSync(f) ? res.type('json').send(fs.readFileSync(f)) : res.status(404).json({ error: 'sin carteras en paralelo' });
 });
+app.get('/api/backtest', (_req, res) => { // lo genera backtest.js (node backtest.js)
+  const f = path.join(process.env.SITE_DIR || path.join(__dirname, 'site'), 'backtest.json');
+  fs.existsSync(f) ? res.type('json').send(fs.readFileSync(f)) : res.status(404).json({ error: 'sin backtest' });
+});
 app.get('/api/mandate', (_req, res) => res.json(mandateInfo()));
 app.get('/api/journal', (_req, res) => res.json(journalReport()));
 app.get('/api/performance', (_req, res) => res.json(performanceReport()));

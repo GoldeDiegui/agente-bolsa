@@ -252,3 +252,13 @@ Varias carteras virtuales con parámetros distintos compiten sobre **los mismos 
 - Errores en `carteras.json` (id repetido, clave desconocida, valores fuera de rango) se avisan en Actions y en la web, y nunca detienen la cartera principal. Un fallo en una cartera no afecta a las demás.
 - Las copias de seguridad diarias incluyen estas carteras.
 - Con pocos días las diferencias entre carteras son ruido; conviene esperar semanas antes de sacar conclusiones.
+
+## Backtest de reglas basadas en precio
+
+`backtest.js` simula con ~5 años de histórico diario de Yahoo (gratis) qué aportan las reglas que dependen del precio, para el S&P 500 y el IBEX 35 por separado. El flujo **Backtest** (`.github/workflows/backtest.yml`) lo ejecuta el día 1 de cada mes y a mano (Actions → Backtest → Run workflow); escribe `site/backtest.json` en la rama `estado` y la web muestra la tarjeta **Backtest de reglas de precio**. En local: `node backtest.js [--years 5] [--markets "S&P 500,IBEX 35"] [--max-symbols N] [--random 20]`.
+
+- **Estrategia simulada**: compra los N valores con mayor momentum 12-1 (N ≈ 4 % del universo, 20 en el S&P 500), rebalancea cada 21 sesiones (sale si cae del puesto 1,5 × N), con efectivo mínimo, máximo por valor y costes (10 pb por operación en EE. UU., 25 en España). Las señales usan datos hasta el día anterior; las órdenes se ejecutan al cierre.
+- **Variantes** (cada una añade una regla a la anterior): solo momentum · stop fijo −8 % · stop por volatilidad (ATR) · + toma de beneficios · + filtro de tendencia (sobre su media de 200) · + filtro de mercado (índice frente a sus medias de 50 y 200) · + tamaño por volatilidad · todas juntas («reglas de precio del gestor»). Los parámetros salen de `mandato.json`. Además, variantes de sensibilidad (stop −5/−12 %, ATR ×2,5/×5, mitad y doble de posiciones, rebalanceo trimestral).
+- **Referencias**: el índice, una cartera equiponderada de todo el universo, y 20 selecciones **al azar** con las reglas del gestor (para ver si el momentum aporta algo o es suerte).
+- **Métricas**: rentabilidad total y anual, volatilidad, Sharpe, caída máxima, tiempo invertido, operaciones, stops y qué % se recuperó más de un 5 % en 20 sesiones, rotación y rentabilidad por año. La web redacta una lectura de los resultados.
+- **Límites**: no se pueden probar los fundamentales (no hay histórico gratuito); universo = valores actuales de cada índice (sesgo de supervivencia, infla los números absolutos de todas las variantes); solo precio (sin dividendos), cada mercado en su moneda; un solo periodo histórico. Sirve para comparar reglas entre sí, no para esperar esas rentabilidades.
